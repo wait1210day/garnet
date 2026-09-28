@@ -1,0 +1,12 @@
+/build
+/.idea
+/.vscode
+
+/sketch
+
+**/.venv/
+**/__pycache__/
+*.pyc
+
+/third_party/cubemx/*
+!/third_party/cubemx/cubemx.ioc
