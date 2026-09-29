@@ -169,6 +169,25 @@ public:
         return i2c::read_expected<RegT>(bus_, dev_addr_, method_, timeout_);
     }
 
+    template<typename FirstFieldValue, typename ... RestFieldValues>
+        requires((std::is_same_v<typename FirstFieldValue::FieldT::RegT,
+                                 typename RestFieldValues::FieldT::RegT>
+                  && ...))
+    [[nodiscard]] std::expected<void, Err> update(FirstFieldValue first, RestFieldValues...rest)
+    {
+        using RegT = typename FirstFieldValue::FieldT::RegT;
+        typename RegT::RawT raw;
+        Err err = i2c::read<RegT>(bus_, dev_addr_, raw, method_, timeout_);
+        if (err != Err::kOk)
+            return std::unexpected(err);
+
+        Mutator<RegT> mut{raw};
+        mut.template set<typename FirstFieldValue::FieldT>(first.value);
+        (mut.template set<typename RestFieldValues::FieldT>(rest.value), ...);
+
+        return i2c::write_expected<RegT>(bus_, dev_addr_, mut.raw(), method_, timeout_);
+    }
+
 private:
     Bus::Scoped& bus_;
     uint8_t dev_addr_;
