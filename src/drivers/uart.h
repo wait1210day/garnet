@@ -72,6 +72,8 @@ public:
         }
 
         // To make sure all the data have been TRANSMITTED.
+        // Call after transmit() within the same Scoped lock acquisition.
+        // Releasing and reacquiring the lock between them is unsupported.
         ErrStatus wait_flush(TickType_t timeout)
         {
             GCHECK(tx_ && "invalid operation");
@@ -110,7 +112,7 @@ private:
 
     Config config_{};
     StaticMutex mutex_{StaticInitOption::kDefer};
-    StaticBinarySemaphore completion_{StaticInitOption::kDefer};
+    StaticBinarySemaphore notifier_{StaticInitOption::kDefer};
     std::atomic<bool> dma_transfer_error_{false};
 };
 

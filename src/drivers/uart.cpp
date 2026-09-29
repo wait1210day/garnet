@@ -3,6 +3,7 @@
 
 #include "stm32g4xx_ll_dma.h"
 
+#include "base/critical_section.h"
 #include "base/panic.h"
 #include "drivers/ll_helper.h"
 #include "drivers/uart.h"
@@ -17,7 +18,7 @@ ErrStatus Transmitter::init(const Config &config)
 
     config_ = config;
 
-    completion_.init();
+    notifier_.init();
     mutex_.init();
 
     return ErrStatus::kOk;
@@ -61,8 +62,36 @@ ErrStatus Transmitter::transmit(std::span<const uint8_t> data, XferMethod method
 
 ErrStatus Transmitter::transmit_poll(std::span<const uint8_t> data, TickType_t timeout)
 {
-    // TODO(masshiroio): implement this
-    return ErrStatus::kUnsupported;
+    USART_TypeDef *uart = config_.uart;
+    const TickType_t start_tick = xTaskGetTickCount();
+    TickType_t last_delay_tick = start_tick;
+
+    for (uint8_t byte : data)
+    {
+        for (;;)
+        {
+            const TickType_t now = xTaskGetTickCount();
+            if (timeout != portMAX_DELAY && now - start_tick >= timeout)
+                return ErrStatus::kTimeout;
+
+            // Bound continuous polling to one tick so lower-priority tasks run.
+            if (now != last_delay_tick)
+            {
+                vTaskDelay(1);
+                last_delay_tick = xTaskGetTickCount();
+                continue;
+            }
+
+            if (LL_USART_IsActiveFlag_TXE_TXFNF(uart))
+                break;
+            taskYIELD();
+        }
+
+        LL_USART_TransmitData8(uart, byte);
+    }
+
+    // The USART has accepted the final byte; wait_flush() waits for the TX pin.
+    return ErrStatus::kOk;
 }
 
 ErrStatus Transmitter::transmit_dma(std::span<const uint8_t> data, TickType_t timeout)
@@ -72,7 +101,7 @@ ErrStatus Transmitter::transmit_dma(std::span<const uint8_t> data, TickType_t ti
     const uint32_t channel = config_.dma_channel;
 
     // drain an ISR completion that raced with the preceding timeout
-    (void) completion_.take(0);
+    (void) notifier_.take(0);
 
     dma_transfer_error_.store(false, std::memory_order_relaxed);
 
@@ -96,7 +125,7 @@ ErrStatus Transmitter::transmit_dma(std::span<const uint8_t> data, TickType_t ti
     LL_DMA_EnableChannel(dma, channel);
     LL_USART_EnableDMAReq_TX(uart);
 
-    const bool acquired = completion_.take(timeout);
+    const bool acquired = notifier_.take(timeout);
 
     LL_DMA_DisableChannel(dma, channel);
     LL_DMA_DisableIT_TC(dma, channel);
@@ -127,13 +156,42 @@ ErrStatus Transmitter::transmit_dma(std::span<const uint8_t> data, TickType_t ti
 
 ErrStatus Transmitter::wait_flush(TickType_t timeout)
 {
-    // TODO(masshiroio): implement this
-    return ErrStatus::kUnsupported;
+    USART_TypeDef *uart = config_.uart;
+
+    {
+        const TaskCriticalSection critical;
+
+        // DMA and USART completion share this semaphore under the transmitter lock.
+        // A DMA IRQ may have completed just after transmit_dma() timed out.
+        (void) notifier_.take(0);
+
+        if (LL_USART_IsActiveFlag_TC(uart))
+            return ErrStatus::kOk;
+        if (timeout == 0)
+            return ErrStatus::kTimeout;
+
+        LL_USART_EnableIT_TC(uart);
+    }
+
+    (void) notifier_.take(timeout);
+
+    const TaskCriticalSection critical;
+    LL_USART_DisableIT_TC(uart);
+    // TC may have become set as the semaphore wait timed out.
+    return LL_USART_IsActiveFlag_TC(uart) ? ErrStatus::kOk : ErrStatus::kTimeout;
 }
 
 void Transmitter::on_usart_irq()
 {
-    // TODO(masshiroio): implement this
+    USART_TypeDef *uart = config_.uart;
+    if (!LL_USART_IsEnabledIT_TC(uart) || !LL_USART_IsActiveFlag_TC(uart))
+        return;
+
+    LL_USART_DisableIT_TC(uart);
+
+    BaseType_t wake = pdFALSE;
+    notifier_.give_from_isr(wake);
+    portYIELD_FROM_ISR(wake);
 }
 
 void Transmitter::on_tx_dma_irq()
@@ -162,7 +220,7 @@ void Transmitter::on_tx_dma_irq()
     std::atomic_signal_fence(std::memory_order_release);
 
     BaseType_t wake = pdFALSE;
-    completion_.give_from_isr(wake);
+    notifier_.give_from_isr(wake);
 
     portYIELD_FROM_ISR(wake);
 }
