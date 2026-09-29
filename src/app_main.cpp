@@ -86,7 +86,7 @@ GARNET_CCMRAM_DATA Ctrloop::FastRamContext g_ctrl_fastram;
 Ctrloop g_ctrl;
 
 i2c::Bus g_i2c_bus_onboard;
-uart::Transmitter g_uart_tx;
+uart::Port g_uart;
 
 CTRLOOP_IRQ_HANDLER_IMPL(ADC1_2_IRQHandler, g_ctrl, adc_injected)
 
@@ -95,39 +95,33 @@ I2C_BUS_IRQ_HANDLER_IMPL(I2C1_ER_IRQHandler, g_i2c_bus_onboard, i2c_error)
 I2C_BUS_IRQ_HANDLER_IMPL(DMA2_Channel1_IRQHandler, g_i2c_bus_onboard, tx_dma)
 I2C_BUS_IRQ_HANDLER_IMPL(DMA2_Channel2_IRQHandler, g_i2c_bus_onboard, rx_dma)
 
-UART_IRQ_HANDLER_IMPL(USART2_IRQHandler, g_uart_tx, usart)
-UART_IRQ_HANDLER_IMPL(DMA2_Channel3_IRQHandler, g_uart_tx, tx_dma)
+UART_IRQ_HANDLER_IMPL(USART2_IRQHandler, g_uart, usart)
+UART_IRQ_HANDLER_IMPL(DMA2_Channel3_IRQHandler, g_uart, tx_dma)
+UART_IRQ_HANDLER_IMPL(DMA2_Channel4_IRQHandler, g_uart, rx_dma)
 
 
 GARNET_NORETURN void set_param_task(void *param)
 {
-    // TODO(masshiroio): a temporary test task, just for debugging.
-    //                   setpoints should be set by I2C or CAN bus, which will be
-    //                   implemented later.
+    // TODO(masshiroio): replace this temporary command parser with the console.
 
     uint32_t value = 0;
     uint32_t valid_count = 0;
 
-    USART_TypeDef *uart = g_periphs.ll_uart;
+    auto rx = g_uart.rx().acquire(portMAX_DELAY);
+    GCHECK(rx.has_value());
 
     while (true)
     {
-        uint8_t ch = '\0';
-
-        while (!LL_USART_IsActiveFlag_RXNE_RXFNE(uart))
+        uint8_t ch = 0;
+        const auto received = rx->read_some({&ch, 1}, portMAX_DELAY);
+        if (received.status != uart::Receiver::Status::kOk)
         {
-            if (LL_USART_IsActiveFlag_ORE(uart))
-            {
-                LL_USART_ClearFlag_ORE(uart);
-                continue;
-            }
-
-            if (LL_USART_IsActiveFlag_FE(uart))
-                LL_USART_ClearFlag_FE(uart);
+            value = 0;
+            valid_count = 0;
+            FUMI_LOGE(kTAG, "UART receive error: %u",
+                      static_cast<unsigned>(received.status));
+            continue;
         }
-        ch = LL_USART_ReceiveData8(uart);
-
-        vTaskDelay(pdMS_TO_TICKS(100));
 
         if (ch >= '0' && ch <= '9')
         {
@@ -380,14 +374,15 @@ GARNET_NORETURN void set_param_task(void *param)
 void init_and_spawn_task(void*)
 {
     // System basic components
-    g_uart_tx.init({
+    ErrStatus err = g_uart.init({
         .uart = g_periphs.ll_uart,
-        .dma = DMA2,
-        .dma_channel = LL_DMA_CHANNEL_3
+        .tx_dma = { DMA2, LL_DMA_CHANNEL_3 },
+        .rx_dma = { DMA2, LL_DMA_CHANNEL_4 }
     });
+    GCHECK_OK(err, "failed to initialize UART port");
 
-    ErrStatus err = fumi::get_default_instance().init({
-        .tx = &g_uart_tx,
+    err = fumi::get_default_instance().init({
+        .tx = &g_uart.tx(),
         .task_priority = PriorityTraits<Priority::kFumi>::to_freertos()
     });
     GCHECK_OK(err, "failed to start fumi logger");
