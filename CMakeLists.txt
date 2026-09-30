@@ -21,9 +21,9 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS ON)
 
-set(CMAKE_C_FLAGS_DEBUG "-Os -g3")
+set(CMAKE_C_FLAGS_DEBUG "-Og -g3")
 set(CMAKE_C_FLAGS_RELEASE "-Os -g0")
-set(CMAKE_CXX_FLAGS_DEBUG "-Os -g3")
+set(CMAKE_CXX_FLAGS_DEBUG "-Og -g3")
 set(CMAKE_CXX_FLAGS_RELEASE "-Os -g0")
 
 # Shared by application, generated board code, HAL/LL and FreeRTOS.
