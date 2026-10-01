@@ -17,11 +17,102 @@ namespace
 Logger g_default_instance;
 } // namespace anonymous
 
+
+char get_level_char(Level level)
+{
+    switch (level)
+    {
+        case Level::kDebug: return 'D';
+        case Level::kInfo: return 'I';
+        case Level::kWarn: return 'W';
+        case Level::kError: return 'E';
+        default:
+            return '?';
+    }
+}
+
+size_t format_slot(const Message& slot, char *out_buf, size_t max_len)
+{
+    int prefix_len = snprintf(out_buf, max_len, "%c (%lu) %.*s: ",
+                              get_level_char(slot.level),
+                              static_cast<unsigned long>(slot.timestamp),
+                              kTagMaxLen,
+                              slot.tag ? slot.tag : "???");
+
+    if (prefix_len < 0)
+        return 0;
+
+    auto used = static_cast<size_t>(prefix_len);
+    if (used >= max_len)
+        used = max_len - 1;
+
+    size_t rem = max_len - used;
+    int body_len = 0;
+    if (slot.format_fn)
+    {
+        body_len = slot.format_fn(slot.args_store, out_buf + used, rem);
+    }
+    if (body_len < 0) return 0;
+
+    used = strlen(out_buf);
+    if (used + 2 < max_len)
+    {
+        out_buf[used++] = '\r';
+        out_buf[used++] = '\n';
+        out_buf[used] = '\0';
+    }
+    else if (used + 1 < max_len)
+    {
+        out_buf[used++] = '\n';
+        out_buf[used] = '\0';
+    }
+    else if (used > 0)
+    {
+        out_buf[max_len - 2] = '\r';
+        out_buf[max_len - 1] = '\n';
+        used = max_len;
+    }
+    return used;
+}
+
 Logger& get_default_instance()
 {
     return g_default_instance;
 }
 
+
+void Logger::submit_log(Level level, const char *tag, FormatDispatcher *format_fn,
+                        const void *payload, size_t payload_size)
+{
+    if (__get_IPSR() != 0U)
+    {
+        stats_.drop_in_isr++;
+        return;
+    }
+
+    uint8_t slot_idx;
+    if (!q_free_slot_.receive(slot_idx, kNoSlotTimeout))
+    {
+        stats_.drop_no_free_slot++;
+        return;
+    }
+
+    GCHECK(slot_idx < kNbSlots);
+
+    Message& slot = slots_[slot_idx];
+
+    slot.level = level;
+    slot.timestamp = xTaskGetTickCount();
+    slot.tag = tag;
+    slot.format_fn = format_fn;
+    memcpy(slot.args_store, payload, payload_size);
+
+    if (!q_ready_slot_.send(slot_idx, 0))
+    {
+        stats_.drop_unknown++;
+        q_free_slot_.send(slot_idx, 0);
+    }
+}
 
 [[noreturn]] void Logger::task_routine()
 {
@@ -33,11 +124,16 @@ Logger& get_default_instance()
         GCHECK(slot_idx < kNbSlots && "invalid slot index");
 
         Message *slot = &slots_[slot_idx];
+        size_t len = format_slot(*slot, format_buf_, sizeof(format_buf_));
+
+        slot->format_fn = nullptr;
+        q_free_slot_.send(slot_idx, 0);
 
         if (auto tx = uart_tx_->acquire(pdMS_TO_TICKS(100)))
         {
-            ErrStatus err = tx->transmit({
-                reinterpret_cast<uint8_t*>(slot->buf), slot->len}, XferMethod::kDMA, pdMS_TO_TICKS(20));
+            const ErrStatus err = tx->transmit({
+                reinterpret_cast<uint8_t*>(format_buf_), len},
+                XferMethod::kDMA, pdMS_TO_TICKS(20));
 
             if (err != ErrStatus::kOk)
                 stats_.uart_tx_error++;
@@ -48,8 +144,6 @@ Logger& get_default_instance()
         {
             stats_.uart_tx_error++;
         }
-
-        slot->len = 0;
 
         q_free_slot_.send(slot_idx, 0);
     }
@@ -80,133 +174,6 @@ ErrStatus Logger::init(const Config& config)
 void Logger::set_level(Level level)
 {
     level_.store(level, std::memory_order_relaxed);
-}
-
-void Logger::printf(Level level, const char *tag, const char *fmt, ...)
-{
-    va_list ap;
-    va_start(ap, fmt);
-    Logger::vprintf(level, tag, fmt, ap);;
-    va_end(ap);
-}
-
-namespace
-{
-
-char get_level_char(Level level)
-{
-    switch (level)
-    {
-        case Level::kDebug: return 'D';
-        case Level::kInfo: return 'I';
-        case Level::kWarn: return 'W';
-        case Level::kError: return 'E';
-        default:
-            return '?';
-    }
-}
-
-int format_prefix(char *buf, size_t size, Level level, const char *tag)
-{
-    const uint32_t ts = xTaskGetTickCount();
-
-    return snprintf(
-        buf, size, "%c (%lu) %.*s: ",
-        get_level_char(level),
-        static_cast<unsigned long>(ts),
-        kTagMaxLen,
-        tag ? tag : "???"
-    );
-}
-
-size_t format_msg(Message *msg, Level level,
-                  const char *tag, const char *fmt, va_list ap)
-{
-    int n = format_prefix(msg->buf, sizeof(msg->buf), level, tag);
-    if (n < 0)
-        return 0;
-
-    auto used = static_cast<size_t>(n);
-    if (used >= sizeof(msg->buf))
-        used = sizeof(msg->buf) - 1;
-
-    size_t rem = sizeof(msg->buf) - used;
-
-    if (vsnprintf(msg->buf + used, rem, fmt, ap) < 0)
-        return 0;
-
-    used = strnlen(msg->buf, sizeof(msg->buf));
-
-    if (used + 2 < sizeof(msg->buf))
-    {
-        msg->buf[used++] = '\r';
-        msg->buf[used++] = '\n';
-        msg->buf[used] = '\0';
-    }
-    else if (used + 1 < sizeof(msg->buf))
-    {
-        msg->buf[used++] = '\n';
-        msg->buf[used] = '\0';
-    }
-    else if (used > 0)
-    {
-        msg->buf[sizeof(msg->buf) - 2] = '\r';
-        msg->buf[sizeof(msg->buf) - 1] = '\n';
-        used = sizeof(msg->buf);
-    }
-
-    return used;
-}
-
-} // namespace anonymous
-
-void Logger::vprintf(Level level, const char *tag, const char *fmt, va_list ap)
-{
-    // not initialized yet
-    if (!ready_)
-        return;
-
-    if (!fmt)
-        return;
-
-    if (level < level_.load(std::memory_order_relaxed))
-        return;
-
-    if (__get_IPSR() != 0U)
-    {
-        stats_.drop_in_isr++;
-        return;
-    }
-
-    // Try to get a free slot
-    uint8_t slot_idx;
-    if (!q_free_slot_.receive(slot_idx, kNoSlotTimeout))
-    {
-        stats_.drop_no_free_slot++;
-        return;
-    }
-    GCHECK(slot_idx < kNbSlots);
-
-    // Format
-    Message *msg = &slots_[slot_idx];
-    va_list apdup;
-    va_copy(apdup, ap);
-    msg->len = format_msg(msg, level, tag, fmt, apdup);
-    va_end(apdup);
-
-    if (!msg->len)
-    {
-        msg->len = 0;
-        stats_.drop_format_failure++;
-        q_free_slot_.send(slot_idx, 0);
-        return;
-    }
-
-    if (!q_ready_slot_.send(slot_idx, 0))
-    {
-        stats_.drop_unknown++;
-        q_free_slot_.send(slot_idx, 0);
-    }
 }
 
 void Logger::get_stats_approx(Stats& out) const

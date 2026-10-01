@@ -43,7 +43,9 @@ constexpr static uint32_t kNbSlots = 16;
 constexpr static int kTagMaxLen = 24;
 
 // FreeRTOS task stack depth in `StackType_t` unit, not bytes
-constexpr static uint32_t kTaskStackDepth = 256;
+constexpr static uint32_t kTaskStackDepth = 384;
+// 56 bytes is enough for about ~12 arguments
+constexpr static uint32_t kArgsCapacity = 56;
 
 constexpr static TickType_t kNoSlotTimeout = pdMS_TO_TICKS(0);
 
@@ -52,16 +54,50 @@ struct Stats
     uint32_t sent;
     uint32_t uart_tx_error;
     uint32_t drop_no_free_slot;
-    uint32_t drop_format_failure;
     uint32_t drop_in_isr;
     uint32_t drop_unknown;
 };
 
+struct Message;
+using FormatDispatcher = size_t(const void *args_store, char *out_buf, size_t max_len);
+
 struct Message
 {
-    size_t len;
-    char buf[kMsgMaxLen];
+    Level level;
+    uint32_t timestamp;
+    const char *tag;
+    FormatDispatcher *format_fn;
+    // Stores a `Payload<...>` object
+    alignas(8) uint8_t args_store[kArgsCapacity];
 };
+
+template<typename...Args>
+struct Payload
+{
+    const char *fmt;
+    std::tuple<std::decay_t<Args>...> args;
+};
+
+char get_level_char(Level level);
+
+template<typename...Args>
+size_t format_dispatcher(const void *args_store, char *out_buf, size_t max_len)
+{
+    using Payload = Payload<Args...>;
+    const auto& payload = *static_cast<const Payload*>(args_store);
+
+    if constexpr (sizeof...(Args) == 0)
+    {
+        return snprintf(out_buf, max_len, "%s", payload.fmt);
+    }
+    else
+    {
+        return std::apply([&](const auto&...args) {
+            return snprintf(out_buf, max_len, payload.fmt, args...);
+        }, payload.args);
+    }
+}
+
 
 class Logger
 {
@@ -76,9 +112,25 @@ public:
     ErrStatus init(const Config& config);
 
     void set_level(Level level);
-    void printf(Level level, const char *tag, const char *fmt, ...)
-        __attribute__((format(printf, 4, 5)));
-    void vprintf(Level level, const char *tag, const char *fmt, va_list ap);
+
+    // Note: `args` are stored in a buffer then submitted to the logging task.
+    // If a string pointer ("%s") is contained the arguments pack, it must be
+    // valid until the log is formatted by the task asynchronously.
+    // A suggested way to avoid misuse is NEVER pass non-static %s strings.
+    // A pointer with %p is always safe since the pointer will not be dereferenced.
+    template<typename...Args>
+    void log(Level level, const char *tag, const char *fmt, Args&&...args)
+    {
+        if (!ready_ || level < level_.load(std::memory_order_relaxed))
+            return;
+
+        using Payload = Payload<Args...>;
+        static_assert(sizeof(Payload) <= kArgsCapacity,
+                      "log arguments exceed slot storage capacity");
+
+        Payload payload{fmt, std::make_tuple(std::forward<Args>(args)...)};
+        submit_log(level, tag, &format_dispatcher<Args...>, &payload, sizeof(Payload));
+    }
 
     // Note: approx. stats, since the data may be updated when copying
     // the structure.
@@ -87,6 +139,9 @@ public:
 private:
     static_assert(std::atomic<uint8_t>::is_always_lock_free &&
         "requires lock-free atomic implementation");
+
+    void submit_log(Level level, const char *tag, FormatDispatcher *format_fn,
+                    const void *payload, size_t payload_size);
 
     [[noreturn]] void task_routine();
 
@@ -103,6 +158,7 @@ private:
 
     Stats stats_{};
     Message slots_[kNbSlots]{};
+    alignas(4) char format_buf_[kMsgMaxLen]{};
 };
 
 Logger& get_default_instance();
@@ -111,28 +167,40 @@ Logger& get_default_instance();
 
 #if FUMI_LEVEL_DEBUG >= FUMI_COMPILE_LEVEL
 #define FUMI_LOGD(tag, fmt, ...) \
-    fumi::get_default_instance().printf(fumi::Level::kDebug, tag, fmt, ##__VA_ARGS__)
+    do { \
+        if (false) { printf(fmt, ##__VA_ARGS__); } \
+        fumi::get_default_instance().log(fumi::Level::kDebug, tag, fmt, ##__VA_ARGS__); \
+    } while (0)
 #else
 #define FUMI_LOGD(tag, fmt, ...) ((void)0)
 #endif // FUMI_LEVEL_DEBUG
 
 #if FUMI_LEVEL_INFO >= FUMI_COMPILE_LEVEL
 #define FUMI_LOGI(tag, fmt, ...) \
-    fumi::get_default_instance().printf(fumi::Level::kInfo, tag, fmt, ##__VA_ARGS__)
+    do { \
+        if (false) { printf(fmt, ##__VA_ARGS__); } \
+        fumi::get_default_instance().log(fumi::Level::kInfo, tag, fmt, ##__VA_ARGS__); \
+    } while (0)
 #else
 #define FUMI_LOGI(tag, fmt, ...) ((void)0)
 #endif // FUMI_LEVEL_INFO
 
 #if FUMI_LEVEL_WARN >= FUMI_COMPILE_LEVEL
 #define FUMI_LOGW(tag, fmt, ...) \
-    fumi::get_default_instance().printf(fumi::Level::kWarn, tag, fmt, ##__VA_ARGS__)
+    do { \
+        if (false) { printf(fmt, ##__VA_ARGS__); } \
+        fumi::get_default_instance().log(fumi::Level::kWarn, tag, fmt, ##__VA_ARGS__); \
+    } while (0)
 #else
 #define FUMI_LOGW(tag, fmt, ...) ((void)0)
 #endif // FUMI_LEVEL_WARN
 
 #if FUMI_LEVEL_ERROR >= FUMI_COMPILE_LEVEL
 #define FUMI_LOGE(tag, fmt, ...) \
-    fumi::get_default_instance().printf(fumi::Level::kError, tag, fmt, ##__VA_ARGS__)
+    do { \
+        if (false) { printf(fmt, ##__VA_ARGS__); } \
+        fumi::get_default_instance().log(fumi::Level::kError, tag, fmt, ##__VA_ARGS__); \
+    } while (0)
 
 #else
 #define FUMI_LOGE(tag, fmt, ...) ((void)0)
