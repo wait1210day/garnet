@@ -35,6 +35,8 @@
 #include "drivers/i2c_device.h"
 #include "drivers/i2cdev_pca9536.h"
 #include "drivers/i2cdev_tmp112.h"
+#include "drivers/i2cdev/pca9536.h"
+#include "drivers/i2cdev/tmp112.h"
 #include "drivers/uart.h"
 #include "control/ctrloop.h"
 
@@ -412,17 +414,13 @@ void init_and_spawn_task(void*)
         namespace pca = pca9536;
         i2c::Dev dev(*bus, pca::kDevAddr, XferMethod::kIRQ, pdMS_TO_TICKS(20));
 
-        const auto seq = dev.write(
-            pca::ODR::P0::assign(pca::Level::kLow),
-            pca::ODR::P1::assign(pca::Level::kLow),
-            pca::ODR::P2::assign(pca::Level::kHigh),
-            pca::ODR::P3::assign(pca::Level::kHigh)
+        const auto seq = dev.update(
+            pca::ODR::P0::assign(pca::Level::kHigh),
+            pca::ODR::P1::assign(pca::Level::kHigh)
         ).and_then([&] {
             return dev.write(
                 pca::CR::P0::assign(pca::Dir::kOut),
-                pca::CR::P1::assign(pca::Dir::kOut),
-                pca::CR::P2::assign(pca::Dir::kOut),
-                pca::CR::P3::assign(pca::Dir::kOut)
+                pca::CR::P1::assign(pca::Dir::kOut)
             );
         });
         GCHECK(seq.has_value() && "failed to initialize pca9536");
