@@ -22,9 +22,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS ON)
 
 set(CMAKE_C_FLAGS_DEBUG "-Og -g3")
-set(CMAKE_C_FLAGS_RELEASE "-Os -g0")
+set(CMAKE_C_FLAGS_RELEASE "-Os -g3")
 set(CMAKE_CXX_FLAGS_DEBUG "-Og -g3")
-set(CMAKE_CXX_FLAGS_RELEASE "-Os -g0")
+set(CMAKE_CXX_FLAGS_RELEASE "-Os -g3")
 
 # Shared by application, generated board code, HAL/LL and FreeRTOS.
 add_library(garnet_mcu INTERFACE)
@@ -54,6 +54,7 @@ add_executable(garnet
 
     src/services/fumi.cpp
     src/services/hermes.cpp
+    src/services/janus.cpp
 
     src/control/ctrloop.cpp
     src/control/adc_optimizer.cpp
