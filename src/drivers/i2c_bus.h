@@ -39,6 +39,8 @@ enum class Err : uint8_t
     kUnexpectedStop,
 };
 
+const char *get_err_str(Err e);
+
 // Synchronous, master-only, 7-bit I2C bus. No heap allocation or HAL calls.
 // One owner per peripheral; do not mix HAL transfers with this driver.
 //

@@ -45,6 +45,40 @@ void flush_tx(I2C_TypeDef *i2c)
 
 } // namespace anonymous
 
+const char *get_err_str(Err e)
+{
+    switch (e)
+    {
+        case Err::kOk:
+            return "ok";
+        case Err::kInvalidArg:
+            return "invalid argument";
+        case Err::kNotInitialized:
+            return "not initialized";
+        case Err::kInvalidContext:
+            return "invalid context";
+        case Err::kDmaNotConfigured:
+            return "dma not configured";
+        case Err::kBusy:
+            return "bus is busy";
+        case Err::kTimeout:
+            return "timed out";
+        case Err::kNack:
+            return "device responded nack";
+        case Err::kBus:
+            return "bus error";
+        case Err::kArbitrationLost:
+            return "arbitration lost";
+        case Err::kOverrun:
+            return "overrun";
+        case Err::kDma:
+            return "dma error";
+        case Err::kUnexpectedStop:
+            return "unexpected stop";
+    }
+    return "unknown error";
+}
+
 ErrStatus Bus::init(const Config& config)
 {
     // conflict DMA instance and channel
