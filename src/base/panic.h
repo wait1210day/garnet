@@ -4,6 +4,7 @@
 #ifndef GARNET_PANIC_H
 #define GARNET_PANIC_H
 
+#include <cstdint>
 #include <string_view>
 #include <source_location>
 
@@ -29,8 +30,10 @@ using FailSafeCallback = void(void*);
 // Double panic will freeze the system (infinite loop) immediately.
 void append_fail_safe_callback(FailSafeCallback *callback, void *userdata);
 
+[[noreturn]] void panic_at(const char *msg, const char *file, const char *func, uint32_t line);
+
 [[noreturn]] void panic(
-    std::string_view msg, std::source_location loc = std::source_location::current());
+    const char *msg, std::source_location loc = std::source_location::current());
 
 [[noreturn]] inline void unreachable_code(
     const std::source_location loc = std::source_location::current())

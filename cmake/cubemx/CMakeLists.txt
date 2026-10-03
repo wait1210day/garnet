@@ -13,16 +13,12 @@ set(cubemx_include_dirs
     Inc
     Drivers/STM32G4xx_HAL_Driver/Inc
     Drivers/STM32G4xx_HAL_Driver/Inc/Legacy
-    Middlewares/Third_Party/FreeRTOS/Source/include
-    Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2
-    Middlewares/Third_Party/FreeRTOS/Source/portable/GCC/ARM_CM4F
     Drivers/CMSIS/Device/ST/STM32G4xx/Include
     Drivers/CMSIS/Include
 )
 set(cubemx_board_sources
     Src/main.c
     Src/gpio.c
-    Src/app_freertos.c
     Src/adc.c
     Src/comp.c
     Src/dac.c
@@ -69,18 +65,6 @@ set(cubemx_driver_sources
     Drivers/STM32G4xx_HAL_Driver/Src/stm32g4xx_ll_i2c.c
     Drivers/STM32G4xx_HAL_Driver/Src/stm32g4xx_ll_usart.c
 )
-set(cubemx_freertos_sources
-    Middlewares/Third_Party/FreeRTOS/Source/croutine.c
-    Middlewares/Third_Party/FreeRTOS/Source/event_groups.c
-    Middlewares/Third_Party/FreeRTOS/Source/list.c
-    Middlewares/Third_Party/FreeRTOS/Source/queue.c
-    Middlewares/Third_Party/FreeRTOS/Source/stream_buffer.c
-    Middlewares/Third_Party/FreeRTOS/Source/tasks.c
-    Middlewares/Third_Party/FreeRTOS/Source/timers.c
-    Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2/cmsis_os2.c
-    Middlewares/Third_Party/FreeRTOS/Source/portable/MemMang/heap_4.c
-    Middlewares/Third_Party/FreeRTOS/Source/portable/GCC/ARM_CM4F/port.c
-)
 
 # Keep parsing and diagnostics in a standalone, standard-library-only script.
 find_package(Python3 3.10 REQUIRED COMPONENTS Interpreter)
@@ -98,8 +82,7 @@ if(NOT "${cubemx_check_result}" STREQUAL "0")
     message(FATAL_ERROR "${cubemx_check_output}${cubemx_check_error}")
 endif()
 
-foreach(manifest IN ITEMS cubemx_include_dirs cubemx_board_sources
-        cubemx_driver_sources cubemx_freertos_sources)
+foreach(manifest IN ITEMS cubemx_include_dirs cubemx_board_sources cubemx_driver_sources)
     list(TRANSFORM ${manifest} PREPEND "${cubemx_root}/")
 endforeach()
 
@@ -110,8 +93,7 @@ target_link_libraries(cubemx_headers INTERFACE garnet_mcu)
 
 add_library(cubemx_board OBJECT ${cubemx_board_sources})
 add_library(cubemx_drivers OBJECT ${cubemx_driver_sources})
-add_library(cubemx_freertos OBJECT ${cubemx_freertos_sources})
-foreach(component IN ITEMS cubemx_board cubemx_drivers cubemx_freertos)
+foreach(component IN ITEMS cubemx_board cubemx_drivers)
     target_link_libraries(${component} PUBLIC cubemx_headers)
 endforeach()
 
@@ -120,8 +102,7 @@ endforeach()
 add_library(cubemx INTERFACE)
 add_library(cubemx::cubemx ALIAS cubemx)
 target_link_libraries(cubemx INTERFACE
-    cubemx_board cubemx_drivers cubemx_freertos
+    cubemx_board cubemx_drivers
     $<TARGET_OBJECTS:cubemx_board>
     $<TARGET_OBJECTS:cubemx_drivers>
-    $<TARGET_OBJECTS:cubemx_freertos>
 )

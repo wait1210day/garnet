@@ -1,0 +1,5 @@
+* text=auto eol=lf
+
+# For CubeMX, it always generates CRLF .ioc file when updating
+# the configurations.
+*.ioc   text eol=crlf

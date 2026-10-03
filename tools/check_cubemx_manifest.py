@@ -17,14 +17,13 @@ import sys
 LIST_PAIRS = {
     "MX_Application_Src": "cubemx_board_sources",
     "STM32_Drivers_Src": "cubemx_driver_sources",
-    "FreeRTOS_Src": "cubemx_freertos_sources",
     "MX_Include_Dirs": "cubemx_include_dirs",
     "MX_Defines_Syms": "cubemx_definitions",
 }
 SOURCE_GROUPS = {name for name in LIST_PAIRS if name.endswith("_Src")}
 GENERATED_PATH_PREFIX = "${CMAKE_CURRENT_SOURCE_DIR}/../../"
 # Root CMake supplies libm; the generated build's object targets are renamed.
-EXPECTED_LINK_LIBS = ["STM32_Drivers", "${TOOLCHAIN_LINK_LIBRARIES}", "FreeRTOS"]
+EXPECTED_LINK_LIBS = ["STM32_Drivers", "${TOOLCHAIN_LINK_LIBRARIES}"]
 # The only source substitution: platform/ supplies our CCMRAM-aware startup.
 GENERATED_STARTUP = "startup_stm32g474xx.s"
 ADAPTER_PATH = Path("cmake/cubemx/CMakeLists.txt")

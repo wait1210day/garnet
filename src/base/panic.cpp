@@ -126,7 +126,7 @@ void append_fail_safe_callback(FailSafeCallback *callback, void *userdata)
     GCHECK(false && "no more free callback slots");
 }
 
-void panic(std::string_view msg, std::source_location loc)
+void panic_at(const char *msg, const char *file, const char *func, uint32_t line)
 {
     __disable_irq();
 
@@ -154,11 +154,11 @@ void panic(std::string_view msg, std::source_location loc)
         panic_uart_transmit(uart, "\r\n");
 
         panic_uart_transmit(uart, "  in ");
-        panic_uart_transmit(uart, loc.function_name());
+        panic_uart_transmit(uart, func);
         panic_uart_transmit(uart, " at ");
-        panic_uart_transmit(uart, loc.file_name());
+        panic_uart_transmit(uart, file);
         panic_uart_transmit(uart, ":");
-        panic_uart_transmit_u32(uart, loc.line());
+        panic_uart_transmit_u32(uart, line);
         panic_uart_transmit(uart, "\r\n");
 
         panic_uart_transmit(uart, "panic: system will reset...\r\n");
@@ -173,13 +173,20 @@ void panic(std::string_view msg, std::source_location loc)
         __NOP();
 }
 
+void panic(const char *msg, std::source_location loc)
+{
+    panic_at(msg, loc.file_name(), loc.function_name(), loc.line());
+}
+
 void panic_with_errstatus(ErrStatus err, std::string_view info,
                           std::source_location loc)
 {
     const std::string_view err_str = get_error_str(err);
 
+    memset(g_concat_buf, 0, sizeof(g_concat_buf));
     char *curr = g_concat_buf;
-    const char *end = g_concat_buf + sizeof(g_concat_buf);
+    // -1 to prevent '\0' at the tail being overwritten
+    const char *end = g_concat_buf + sizeof(g_concat_buf) - 1;
 
     auto append = [&](std::string_view s) {
         const size_t remaining = end - curr;
@@ -199,7 +206,7 @@ void panic_with_errstatus(ErrStatus err, std::string_view info,
     append(err_str);
     append(")");
 
-    panic({g_concat_buf, static_cast<size_t>(curr - g_concat_buf)}, loc);
+    panic(g_concat_buf, loc);
 }
 
 } // namespace panic

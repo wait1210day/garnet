@@ -42,11 +42,23 @@ target_link_options(garnet_mcu INTERFACE
 # never adding the generated CubeMX project directly
 add_subdirectory(cmake/cubemx)
 
+# FreeRTOS library (using upstream CMake)
+set(FREERTOS_PORT GCC_ARM_CM4F CACHE STRING "")
+set(FREERTOS_HEAP "4" CACHE STRING "")
+
+add_library(freertos_config INTERFACE)
+target_include_directories(freertos_config SYSTEM INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_link_libraries(freertos_config INTERFACE garnet_mcu)
+
+add_subdirectory(third_party/freertos)
+
+# Main application target
 add_executable(garnet
     platform/startup_stm32g474xx.s
 
     src/base/utils.cpp
     src/base/panic.cpp
+    src/base/freertos_hook.cpp
 
     src/drivers/ll_helper.cpp
     src/drivers/i2c_bus.cpp
@@ -65,7 +77,11 @@ add_executable(garnet
 target_include_directories(garnet PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 
 set_target_properties(garnet PROPERTIES SUFFIX ".elf")
-target_link_libraries(garnet PRIVATE cubemx::cubemx m)
+target_link_libraries(garnet PRIVATE
+    cubemx::cubemx
+    freertos_kernel
+    m
+)
 
 # HAL/LL and FreeRTOS remain without LTO.
 # TODO(masshiroio): make everything compile with LTO
