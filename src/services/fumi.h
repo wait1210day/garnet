@@ -154,7 +154,7 @@ private:
 
     TaskHandle_t task_{nullptr};
     StaticTask_t task_data_{};
-    StackType_t task_stack_[kTaskStackDepth]{};
+    alignas(portBYTE_ALIGNMENT) StackType_t task_stack_[kTaskStackDepth]{};
 
     Stats stats_{};
     Message slots_[kNbSlots]{};

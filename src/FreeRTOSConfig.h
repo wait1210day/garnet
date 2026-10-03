@@ -17,6 +17,7 @@ extern "C" {
 #endif // __cplusplus
 
 void panic_os_c_trampoline(const char *file, uint32_t line, const char *expr);
+void mpu_update_stack_guard(void *stack_base);
 
 #ifdef __cplusplus
 }
@@ -116,5 +117,6 @@ void panic_os_c_trampoline(const char *file, uint32_t line, const char *expr);
 #define xPortPendSVHandler  PendSV_Handler
 #define xPortSysTickHandler SysTick_Handler
 
+#define traceTASK_SWITCHED_IN() mpu_update_stack_guard(pxCurrentTCB->pxStack)
 
 #endif /* FREERTOS_CONFIG_H */

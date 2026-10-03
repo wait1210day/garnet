@@ -575,6 +575,8 @@ int main()
         .led_active_low = true
     });
 
+    panic::mpu_stack_guard_init();
+
     BaseType_t result = xTaskCreate(
         init_and_spawn_task, "init_spawn_task", 512, nullptr,
         PriorityTraits<Priority::kInitAndSpawn>::to_freertos(), nullptr);

@@ -45,6 +45,8 @@ void append_fail_safe_callback(FailSafeCallback *callback, void *userdata);
     ErrStatus err, std::string_view info,
     std::source_location loc = std::source_location::current());
 
+void mpu_stack_guard_init();
+
 } // namespace panic
 
 #define GCHECK(expr)                                    \
