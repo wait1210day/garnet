@@ -145,8 +145,6 @@ void panic(std::string_view msg, std::source_location loc)
             slot.pfn(slot.userdata);
     }
 
-    panic_try_raise_breakpoint();
-
     if (g_res.ready)
     {
         auto *uart = g_res.config.uart;
@@ -165,6 +163,8 @@ void panic(std::string_view msg, std::source_location loc)
 
         panic_uart_transmit(uart, "panic: system will reset...\r\n");
         panic_blink_led(g_res.config);
+
+        panic_try_raise_breakpoint();
 
         NVIC_SystemReset();
     }
