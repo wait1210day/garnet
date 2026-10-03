@@ -144,8 +144,6 @@ void Logger::submit_log(Level level, const char *tag, FormatDispatcher *format_f
         {
             stats_.uart_tx_error++;
         }
-
-        q_free_slot_.send(slot_idx, 0);
     }
 }
 
