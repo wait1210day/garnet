@@ -309,7 +309,7 @@ ErrStatus Janus::init(const Config& config)
 namespace
 {
 
-CtrlTargetSet eval_output_soa_protect(const msg::Setpoint& desired)
+ctrl::TargetSet eval_output_soa_protect(const msg::Setpoint& desired)
 {
     // TODO(masshiroio): implement this
 
@@ -328,7 +328,7 @@ coro::PollAsync Janus::task_sequence(coro::FrameStore, Janus *self)
               "failed to subscribe event on hermes bus");
 
     hermes::Message<msg::Setpoint::Topic> req_sp{};
-    req_sp.payload.outstate = CtrlOutputState::kOff;
+    req_sp.payload.outstate = ctrl::OutputState::kOff;
     req_sp.payload.vout = kDefaultVout;
     req_sp.payload.iout = kDefaultIout;
 
@@ -372,12 +372,12 @@ coro::PollAsync Janus::task_sequence(coro::FrameStore, Janus *self)
             FUMI_LOGI(kTAG, "hibernate: gdrv power disabled");
             continue;
         }
-        if (req_sp.payload.outstate == CtrlOutputState::kOff)
+        if (req_sp.payload.outstate == ctrl::OutputState::kOff)
             continue;
 
         // an ON state is requested
-        const CtrlTargetSet final_sp = eval_output_soa_protect(req_sp.payload);
-        if (final_sp.outstate == CtrlOutputState::kOff)
+        const ctrl::TargetSet final_sp = eval_output_soa_protect(req_sp.payload);
+        if (final_sp.outstate == ctrl::OutputState::kOff)
         {
             FUMI_LOGW(kTAG, "requested output (%.02fV,%.02fA) was rejected by SOA protection",
                 final_sp.vout, final_sp.iout);
@@ -401,7 +401,7 @@ coro::PollAsync Janus::task_sequence(coro::FrameStore, Janus *self)
                     kGdrvPwrWaitTicks - used_ticks, self->q_setpoint_, req_sp);
 
                 if (status == coro::Cond::kMet &&
-                    req_sp.payload.outstate == CtrlOutputState::kOff)
+                    req_sp.payload.outstate == ctrl::OutputState::kOff)
                 {
                     // Sender is ONLY allowed to cancel the output enable request,
                     // by sending an output disable request, during the power-on sequence.
@@ -433,11 +433,11 @@ coro::PollAsync Janus::task_sequence(coro::FrameStore, Janus *self)
         while (true)
         {
             co_await coro::queue_recv(portMAX_DELAY, self->q_setpoint_, req_sp);
-            if (req_sp.payload.outstate == CtrlOutputState::kOn)
+            if (req_sp.payload.outstate == ctrl::OutputState::kOn)
             {
                 // update setpoint
-                const CtrlTargetSet update_sp = eval_output_soa_protect(req_sp.payload);
-                if (update_sp.outstate == CtrlOutputState::kOff)
+                const ctrl::TargetSet update_sp = eval_output_soa_protect(req_sp.payload);
+                if (update_sp.outstate == ctrl::OutputState::kOff)
                 {
                     // rejected
                     continue;
@@ -446,11 +446,11 @@ coro::PollAsync Janus::task_sequence(coro::FrameStore, Janus *self)
                 FUMI_LOGD(kTAG, "update output setpoint (%.02fV,%.02fA)", update_sp.vout, update_sp.iout);
                 self->ctrl_pipe_writer_.store(update_sp);
             }
-            else if (req_sp.payload.outstate == CtrlOutputState::kOff)
+            else if (req_sp.payload.outstate == ctrl::OutputState::kOff)
             {
                 // disable output
                 self->ctrl_pipe_writer_.store({
-                    .outstate = CtrlOutputState::kOff,
+                    .outstate = ctrl::OutputState::kOff,
                     .vout = 0,
                     .iout = 0
                 });

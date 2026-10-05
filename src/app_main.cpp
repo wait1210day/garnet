@@ -75,8 +75,8 @@ Peripherals g_periphs{};
 i2c::Bus g_i2c_bus_onboard;
 uart::Port g_uart;
 
-GARNET_CCMRAM_DATA Ctrloop::FastRamContext g_ctrl_fastram;
-Ctrloop g_ctrl;
+GARNET_CCMRAM_DATA ctrl::Ctrloop::FastRamContext g_ctrl_fastram;
+ctrl::Ctrloop g_ctrl;
 Janus g_janus;
 
 
@@ -104,7 +104,7 @@ GARNET_NORETURN void set_param_task(void *param)
     GCHECK(rx.has_value());
 
     msg::Setpoint setpoint{
-        .outstate = CtrlOutputState::kOff,
+        .outstate = ctrl::OutputState::kOff,
         .vout = 5.0f,
         .iout = 2.0f
     };
@@ -130,7 +130,7 @@ GARNET_NORETURN void set_param_task(void *param)
         }
         else if (ch == 'e')
         {
-            setpoint.outstate = CtrlOutputState::kOn;
+            setpoint.outstate = ctrl::OutputState::kOn;
             GCHECK_OK(hermes::get_default_bus().pub<msg::Setpoint::Topic>(setpoint),
                       "failed to publish setpoint");
 
@@ -138,7 +138,7 @@ GARNET_NORETURN void set_param_task(void *param)
         }
         else if (ch == 'd')
         {
-            setpoint.outstate = CtrlOutputState::kOff;
+            setpoint.outstate = ctrl::OutputState::kOff;
             GCHECK_OK(hermes::get_default_bus().pub<msg::Setpoint::Topic>(setpoint),
                       "failed to publish setpoint");
             FUMI_LOGI(kTAG, "requested output state: off");
@@ -487,7 +487,7 @@ void init_and_spawn_task(void*)
     uint32_t prescaler = 0;
 
     // TODO(masshiroio): implement slow sensor fetching & aggregating task.
-    CtrlMeasures meas{};
+    ctrl::Measures meas{};
     while (true)
     {
         vTaskDelay(pdMS_TO_TICKS(1));

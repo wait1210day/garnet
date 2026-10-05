@@ -18,6 +18,9 @@
 #include "control/ctrloop_pub.h"
 #include "control/laplace.h"
 
+namespace ctrl
+{
+
 struct Iir2p2zComp
 {
     float e_n1;
@@ -26,7 +29,7 @@ struct Iir2p2zComp
     float y_n2;
 };
 
-struct CtrlMeasures
+struct Measures
 {
     float v1 = 0;
     float v2 = 0;
@@ -38,7 +41,7 @@ struct CtrlMeasures
 class Ctrloop
 {
 public:
-    using AtomicTargetReader = AtomicSnapshot<CtrlTargetSet>::Reader<Priority::kCtrloopIrq>;
+    using AtomicTargetReader = AtomicSnapshot<TargetSet>::Reader<Priority::kCtrloopIrq>;
 
     // This structure is supposed to be allocated in the fast CCM RAM,
     // e.g. statically placed in CCM RAM section defined by linker script.
@@ -67,8 +70,8 @@ public:
         float slope_dac_step_raw_per_volt;
         float slope_dv_fall_filtered;
 
-        CtrlOpRegion op_region;
-        CtrlOutputState outstate;
+        OpRegion op_region;
+        OutputState outstate;
 
         uint32_t topo_nb_denergize_cycles;
         uint32_t mea_update_counter;
@@ -104,7 +107,9 @@ public:
 private:
     Config config_{};
     AtomicTargetReader target_reader_;
-    SingleCoreSeqlock<CtrlMeasures, Priority::kCtrloopIrq> meas_{{}};
+    SingleCoreSeqlock<Measures, Priority::kCtrloopIrq> meas_{{}};
 };
+
+} // namespace ctrl
 
 #endif //GARNET_CTRLOOP_H

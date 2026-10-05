@@ -7,7 +7,10 @@
 #include <cstdint>
 
 
-enum class CtrlOpRegion : uint8_t
+namespace ctrl
+{
+
+enum class OpRegion : uint8_t
 {
     kIdle,
     kBuck,
@@ -16,17 +19,19 @@ enum class CtrlOpRegion : uint8_t
     kBuckWithBoostAux
 };
 
-enum class CtrlOutputState : uint8_t
+enum class OutputState : uint8_t
 {
     kOn,
     kOff
 };
 
-struct CtrlTargetSet
+struct TargetSet
 {
-    CtrlOutputState outstate;
+    OutputState outstate;
     float vout;
     float iout;
 };
+
+} // namespace ctrl
 
 #endif //GARNET_CTRLOOP_PUB_H

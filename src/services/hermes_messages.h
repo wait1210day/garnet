@@ -20,7 +20,7 @@ struct Setpoint
 {
     using Topic = hermes::Topic<TopicId::kSetpoint, Setpoint>;
 
-    CtrlOutputState outstate;
+    ctrl::OutputState outstate;
     float vout;
     float iout;
 };
@@ -40,7 +40,7 @@ struct Measures
     float temp2;
     float coretemp;
     float vdd_5v;
-    CtrlOpRegion topo_op_region;
+    ctrl::OpRegion topo_op_region;
 };
 
 } // namespace msg

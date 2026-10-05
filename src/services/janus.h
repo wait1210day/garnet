@@ -24,8 +24,8 @@ public:
 
     struct Config
     {
-        Ctrloop::Config ctrl_config;
-        Ctrloop *ctrl;
+        ctrl::Ctrloop::Config ctrl_config;
+        ctrl::Ctrloop *ctrl;
         i2c::Bus *bus;
         uint32_t task_priority;
         GPIO_TypeDef *gdrv_pwren_port;
@@ -40,20 +40,20 @@ private:
     [[noreturn]] void task_routine();
 
     Config cfg_{};
-    Ctrloop *ctrl_{nullptr};
+    ctrl::Ctrloop *ctrl_{nullptr};
     StaticTask_t task_data_{};
     TaskHandle_t task_handle_{};
     alignas(portBYTE_ALIGNMENT) StackType_t stack_data_[kStackWords]{};
 
-    AtomicSnapshot<CtrlTargetSet> ctrl_pipe_{
+    AtomicSnapshot<ctrl::TargetSet> ctrl_pipe_{
         {
-            .outstate = CtrlOutputState::kOff,
+            .outstate = ctrl::OutputState::kOff,
             .vout = kDefaultVout,
             .iout = kDefaultIout
         }
     };
-    using PipeWriter = AtomicSnapshot<CtrlTargetSet>::Writer<Priority::kJanus>;
-    using PipeReader = AtomicSnapshot<CtrlTargetSet>::Reader<Priority::kCtrloopIrq>;
+    using PipeWriter = AtomicSnapshot<ctrl::TargetSet>::Writer<Priority::kJanus>;
+    using PipeReader = AtomicSnapshot<ctrl::TargetSet>::Reader<Priority::kCtrloopIrq>;
     PipeWriter ctrl_pipe_writer_;
 
     coro::FrameBuffer<256> coro_frame_buf_{};
