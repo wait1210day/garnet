@@ -10,6 +10,7 @@
 
 #include "drivers/i2c_bus.h"
 #include "drivers/i2c_registers.h"
+#include "drivers/i2c_command.h"
 
 namespace i2c
 {
@@ -22,6 +23,7 @@ public:
     Dev(Bus::Scoped& bus, uint8_t dev_addr, XferMethod method, TickType_t timeout)
         : bus_(bus), dev_addr_(dev_addr), method_(method), timeout_(timeout) {}
 
+    // Register-addressable device interface
     template<WritableReg RegT>
     [[nodiscard]] std::expected<void, Err> write(typename RegT::RawT raw)
     {
@@ -95,6 +97,44 @@ public:
             (mut.template set<typename RestFieldValues::FieldT>(rest.value), ...);
             return mut;
         });
+    }
+
+
+    // Command-frame-based device interface
+    template<TxCommand CmdT>
+    [[nodiscard]] std::expected<void, Err> execute(const CmdT& cmd)
+    {
+        uint8_t buf[CmdT::kMaxTxBytes];
+        std::expected<size_t, Err> res = cmd.serialize(buf);
+        if (!res)
+            return std::unexpected(res.error());
+
+        const size_t len = *res;
+        if (len == 0)
+            return {};
+
+        Err err = bus_.transmit(dev_addr_, std::span<const uint8_t>{buf, len},
+                                method_, timeout_);
+        if (err != Err::kOk)
+            return std::unexpected(err);
+        return {};
+    }
+
+    template<RxFrame RespT>
+    [[nodiscard]] std::expected<RespT, Err> receive()
+    {
+        RespT resp{};
+        uint8_t buf[RespT::kRxBytes];
+
+        Err err = bus_.receive(dev_addr_,
+            std::span<uint8_t>(buf, sizeof(buf)), method_, timeout_);
+        if (err != Err::kOk)
+            return std::unexpected(err);
+
+        err = resp.deserialize(buf);
+        if (err != Err::kOk)
+            return std::unexpected(err);
+        return resp;
     }
 
 private:
