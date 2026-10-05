@@ -15,6 +15,7 @@
 #include "base/cali.h"
 #include "base/atomic_snapshot.h"
 #include "base/priorities.h"
+#include "control/ctrloop_pub.h"
 #include "control/laplace.h"
 
 struct Iir2p2zComp
@@ -23,28 +24,6 @@ struct Iir2p2zComp
     float e_n2;
     float y_n1;
     float y_n2;
-};
-
-enum class CtrlOpRegion : uint8_t
-{
-    kIdle,
-    kBuck,
-    kBoost,
-    kBoostWithBuckAux,
-    kBuckWithBoostAux
-};
-
-enum class CtrlOutputState : uint8_t
-{
-    kOn,
-    kOff
-};
-
-struct CtrlTargetSet
-{
-    CtrlOutputState outstate;
-    float vout;
-    float iout;
 };
 
 struct CtrlMeasures

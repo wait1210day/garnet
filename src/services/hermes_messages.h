@@ -4,6 +4,7 @@
 #ifndef GARNET_HERMES_MESSAGES_H
 #define GARNET_HERMES_MESSAGES_H
 
+#include "control/ctrloop_pub.h"
 #include "services/hermes.h"
 
 namespace msg
@@ -11,14 +12,35 @@ namespace msg
 
 enum TopicId
 {
-    kTest
+    kSetpoint,
+    kMeasures
 };
 
-struct Test
+struct Setpoint
 {
-    using Topic = hermes::Topic<TopicId::kTest, Test>;
+    using Topic = hermes::Topic<TopicId::kSetpoint, Setpoint>;
 
-    uint32_t num;
+    CtrlOutputState outstate;
+    float vout;
+    float iout;
+};
+
+struct Measures
+{
+    using Topic = hermes::Topic<TopicId::kMeasures, Measures>;
+
+    float vout_set;
+    float iout_set;
+    float vin;
+    float iin;
+    float vout;
+    float iout;
+    float eff;
+    float temp1;
+    float temp2;
+    float coretemp;
+    float vdd_5v;
+    CtrlOpRegion topo_op_region;
 };
 
 } // namespace msg

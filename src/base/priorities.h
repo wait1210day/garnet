@@ -18,6 +18,7 @@ enum class Priority : uint16_t
     kParamSet = 5,
 
     kAdcOptimizer = 10,
+    kJanus = 15,
     kInitAndSpawn = 18,
 
     kTaskBoundary = configMAX_PRIORITIES,

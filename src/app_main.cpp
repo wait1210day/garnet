@@ -33,13 +33,10 @@
 #include "drivers/ll_helper.h"
 #include "drivers/i2c_bus.h"
 #include "drivers/i2c_device.h"
-#include "drivers/i2cdev_pca9536.h"
-#include "drivers/i2cdev_tmp112.h"
 #include "drivers/i2cdev/pca9536.h"
 #include "drivers/i2cdev/tmp112.h"
 #include "drivers/uart.h"
-#include "control/ctrloop.h"
-
+#include "services/janus.h"
 
 namespace
 {
@@ -75,20 +72,14 @@ struct Peripherals
 
 Peripherals g_periphs{};
 
-AtomicSnapshot<CtrlTargetSet> g_ctrl_target_set_pipe{
-    {
-        .outstate = CtrlOutputState::kOff,
-        .vout = 5.0f,
-        .iout = 0
-    }
-};
-AtomicSnapshot<CtrlTargetSet>::Writer<Priority::kParamSet> param_set_writer;
+i2c::Bus g_i2c_bus_onboard;
+uart::Port g_uart;
 
 GARNET_CCMRAM_DATA Ctrloop::FastRamContext g_ctrl_fastram;
 Ctrloop g_ctrl;
+Janus g_janus;
 
-i2c::Bus g_i2c_bus_onboard;
-uart::Port g_uart;
+
 
 CTRLOOP_IRQ_HANDLER_IMPL(ADC1_2_IRQHandler, g_ctrl, adc_injected)
 
@@ -112,6 +103,12 @@ GARNET_NORETURN void set_param_task(void *param)
     auto rx = g_uart.rx().acquire(portMAX_DELAY);
     GCHECK(rx.has_value());
 
+    msg::Setpoint setpoint{
+        .outstate = CtrlOutputState::kOff,
+        .vout = 5.0f,
+        .iout = 2.0f
+    };
+
     while (true)
     {
         uint8_t ch = 0;
@@ -133,16 +130,17 @@ GARNET_NORETURN void set_param_task(void *param)
         }
         else if (ch == 'e')
         {
-            param_set_writer.modify([](CtrlTargetSet& p) {
-                p.outstate = CtrlOutputState::kOn;
-            });
+            setpoint.outstate = CtrlOutputState::kOn;
+            GCHECK_OK(hermes::get_default_bus().pub<msg::Setpoint::Topic>(setpoint),
+                      "failed to publish setpoint");
+
             FUMI_LOGI(kTAG, "requested output state: run");
         }
         else if (ch == 'd')
         {
-            param_set_writer.modify([](CtrlTargetSet& p) {
-                p.outstate = CtrlOutputState::kOff;
-            });
+            setpoint.outstate = CtrlOutputState::kOff;
+            GCHECK_OK(hermes::get_default_bus().pub<msg::Setpoint::Topic>(setpoint),
+                      "failed to publish setpoint");
             FUMI_LOGI(kTAG, "requested output state: off");
         }
 
@@ -152,10 +150,11 @@ GARNET_NORETURN void set_param_task(void *param)
                 FUMI_LOGE(kTAG, "value is out of range, rejected");
             else
             {
-                float setpoint = ((float) value) / 100.0f;
-                param_set_writer.modify([setpoint](CtrlTargetSet& p) {
-                    p.vout = setpoint;
-                });
+                float v = ((float) value) / 100.0f;
+
+                setpoint.vout = v;
+                GCHECK_OK(hermes::get_default_bus().pub<msg::Setpoint::Topic>(setpoint),
+                          "failed to publish setpoint");
             }
             value = 0;
             valid_count = 0;
@@ -452,26 +451,30 @@ void init_and_spawn_task(void*)
     }
 
 
-    auto [reader, writer] = g_ctrl_target_set_pipe
-        .make_transfer_pair<Priority::kCtrloopIrq, Priority::kParamSet>();
+    err = g_janus.init({
+        .ctrl_config = {
+            .ll_adc1 = g_periphs.ll_adc1,
+            .ll_adc2 = g_periphs.ll_adc2,
+            .ll_hrtim = g_periphs.ll_hrtim,
+            .dac_pcmc = g_periphs.dac_pcmc,
+            .dac_zcd = g_periphs.dac_zcd,
+            .comp_pcmc = g_periphs.comp_pcmc,
+            .comp_zcd = g_periphs.comp_zcd,
+            .cali = &g_cali,
+            .fast_ram_ctx = &g_ctrl_fastram
+        },
+        .ctrl = &g_ctrl,
+        .bus = &g_i2c_bus_onboard,
+        .task_priority = PriorityTraits<Priority::kJanus>::to_freertos(),
+        .gdrv_pwren_port = GDRV_PWREN_GPIO_Port,
+        .gdrv_pwren_pin = GDRV_PWREN_Pin
+    });
+    GCHECK_OK(err, "failed to initialize janus");
 
-    param_set_writer = std::move(writer);
-
-    err = g_ctrl.init({
-        .ll_adc1 = g_periphs.ll_adc1,
-        .ll_adc2 = g_periphs.ll_adc2,
-        .ll_hrtim = g_periphs.ll_hrtim,
-        .dac_pcmc = g_periphs.dac_pcmc,
-        .dac_zcd = g_periphs.dac_zcd,
-        .comp_pcmc = g_periphs.comp_pcmc,
-        .comp_zcd = g_periphs.comp_zcd,
-        .cali = &g_cali,
-        .fast_ram_ctx = &g_ctrl_fastram
-    }, std::move(reader));
-    GCHECK_OK(err, "failed to initialize the control loop");
-
-    FUMI_LOGI(kTAG, "initialized control loop");
-
+    panic::append_fail_safe_callback(+[](void*) {
+        // emergency case, just shutdown the power stage rudely.
+        LL_GPIO_ResetOutputPin(GDRV_PWREN_GPIO_Port, GDRV_PWREN_Pin);
+    }, nullptr);
 
     xTaskCreate(set_param_task, "set_param", 256, nullptr,
         PriorityTraits<Priority::kParamSet>::to_freertos(), nullptr);
@@ -483,6 +486,7 @@ void init_and_spawn_task(void*)
 
     uint32_t prescaler = 0;
 
+    // TODO(masshiroio): implement slow sensor fetching & aggregating task.
     CtrlMeasures meas{};
     while (true)
     {
@@ -518,8 +522,8 @@ void init_and_spawn_task(void*)
             }
             
             auto stack_high_mark = uxTaskGetStackHighWaterMark(nullptr);
-            FUMI_LOGI(kTAG, "%.02fV;%.02fA %.02fV;%.02fA eff=%.03f iref=%.02f temp=%.02f,%.02f [st %lubytes]",
-                v1, i1, v2, i2, eff, meas.iref, temp1, temp2, stack_high_mark * sizeof(StackType_t));
+            FUMI_LOGI(kTAG, "%.02fV;%.02fA %.02fV;%.02fA eff=%.03f iref=%.02f temp=%.02f,%.02f [st %lu words]",
+                v1, i1, v2, i2, eff, meas.iref, temp1, temp2, stack_high_mark);
 
             prescaler = 0;
         }
