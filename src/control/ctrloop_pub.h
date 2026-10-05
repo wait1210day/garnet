@@ -21,8 +21,12 @@ enum class OpRegion : uint8_t
 
 enum class OutputState : uint8_t
 {
-    kOn,
-    kOff
+    kOff,
+    // Normal mode, output is regulated.
+    kRegulated,
+    // Output is directly connected to the input, Vin=Vout,
+    // not regulated. Protections are enabled.
+    kPassthrough
 };
 
 struct TargetSet

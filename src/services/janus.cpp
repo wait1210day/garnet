@@ -433,7 +433,7 @@ coro::PollAsync Janus::task_sequence(coro::FrameStore, Janus *self)
         while (true)
         {
             co_await coro::queue_recv(portMAX_DELAY, self->q_setpoint_, req_sp);
-            if (req_sp.payload.outstate == ctrl::OutputState::kOn)
+            if (req_sp.payload.outstate != ctrl::OutputState::kOff)
             {
                 // update setpoint
                 const ctrl::TargetSet update_sp = eval_output_soa_protect(req_sp.payload);
@@ -446,7 +446,7 @@ coro::PollAsync Janus::task_sequence(coro::FrameStore, Janus *self)
                 FUMI_LOGD(kTAG, "update output setpoint (%.02fV,%.02fA)", update_sp.vout, update_sp.iout);
                 self->ctrl_pipe_writer_.store(update_sp);
             }
-            else if (req_sp.payload.outstate == ctrl::OutputState::kOff)
+            else
             {
                 // disable output
                 self->ctrl_pipe_writer_.store({

@@ -130,11 +130,19 @@ GARNET_NORETURN void set_param_task(void *param)
         }
         else if (ch == 'e')
         {
-            setpoint.outstate = ctrl::OutputState::kOn;
+            setpoint.outstate = ctrl::OutputState::kRegulated;
             GCHECK_OK(hermes::get_default_bus().pub<msg::Setpoint::Topic>(setpoint),
                       "failed to publish setpoint");
 
-            FUMI_LOGI(kTAG, "requested output state: run");
+            FUMI_LOGI(kTAG, "requested output state: regulated");
+        }
+        else if (ch == 'p')
+        {
+            setpoint.outstate = ctrl::OutputState::kPassthrough;
+            GCHECK_OK(hermes::get_default_bus().pub<msg::Setpoint::Topic>(setpoint),
+                      "failed to publish setpoint");
+
+            FUMI_LOGI(kTAG, "requested output state: passthrough");
         }
         else if (ch == 'd')
         {

@@ -363,7 +363,7 @@ GARNET_CCMRAM_TEXT void Ctrloop::on_adc_injected_irq()
     {
         case OutputState::kOff:
         {
-            if (requested_target.outstate == OutputState::kOn)
+            if (requested_target.outstate == OutputState::kRegulated)
             {
                 iir_2p2z_reset(&ctx->buck_cv_2p2z);
                 iir_2p2z_reset(&ctx->boost_cv_2p2z);
@@ -378,32 +378,48 @@ GARNET_CCMRAM_TEXT void Ctrloop::on_adc_injected_irq()
                 // by the CV loop's code.
                 update_peak_current_sawtooth(ctx, 0, 0);
 
-                ctx->outstate = OutputState::kOn;
+                ctx->outstate = OutputState::kRegulated;
+            }
+            else if (requested_target.outstate == OutputState::kPassthrough)
+            {
+                // TODO(masshiroio): softstart in passthrough mode.
+                //                   In particular, configure the left leg in fixed-duty mode,
+                //                   right leg in pullup mode, and then rises the duty cycle
+                //                   linearly. This configuration is equivalent to a open-loop
+                //                   buck converter.
+
+                topo_conf_reset(ctx);
+
+                hrtim_config_pullup_leg(ctx->ll.hrtim, TIMER_L, OUT_L_HG, OUT_L_LG);
+                hrtim_config_pullup_leg(ctx->ll.hrtim, TIMER_R, OUT_R_HG, OUT_R_LG);
+                ctx->outstate = OutputState::kPassthrough;
             }
 
             break;
         }
 
-        case OutputState::kOn:
+        case OutputState::kRegulated:
+        case OutputState::kPassthrough:
         {
+            // Regulated and Passthrough states cannot transition directly between
+            // each other without transitioning to Off state first.
+
             if (requested_target.outstate == OutputState::kOff)
-            {
                 ctx->outstate = OutputState::kOff;
-            }
             break;
         }
     }
 
-    if (ctx->outstate != OutputState::kOff)
+    if (ctx->outstate == OutputState::kRegulated)
         topo_conf_adaptive_fsbb(ctx, v1, v2);
-    else
+    else if (ctx->outstate == OutputState::kOff)
     {
         ctx->op_region = OpRegion::kIdle;
         topo_conf_inductor_denergize(ctx);
     }
 
     float iref = 0;
-    if (ctx->outstate == OutputState::kOn)
+    if (ctx->outstate == OutputState::kRegulated)
     {
         // TODO(masshiroio): implement pulse-skipping/burst mode, and constant-current loop
 
