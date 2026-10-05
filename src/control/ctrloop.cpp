@@ -51,6 +51,8 @@ constexpr uint32_t kMeasUpdatePrescaler = 200;
 
 constexpr float kInductorNominalUh = 3.3f;
 
+// 184ps * counter_period = Tsw
+constexpr float kFswHz = (1.0f / (0.184f * kTimerCounterPeriod)) * 1000'000'000.0f;
 constexpr float kFsampleHz = 250'000;
 
 
@@ -400,6 +402,8 @@ GARNET_CCMRAM_TEXT void Ctrloop::on_adc_injected_irq()
     float iref = 0;
     if (ctx->outstate == CtrlOutputState::kOn)
     {
+        // TODO(masshiroio): implement pulse-skipping/burst mode, and constant-current loop
+
         // Soft start & soft setpoint transient (linear ramping)
         const float cv_setpoint = requested_target.vout;
         if (cv_setpoint != ctx->cv_setpoint_ramping) [[unlikely]]
