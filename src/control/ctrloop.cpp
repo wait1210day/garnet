@@ -364,9 +364,26 @@ namespace
     }
 
     // passthrough mode
-    GARNET_CCMRAM_TEXT void pt_start(Ctrloop::FastRamContext *ctx)
+    GARNET_CCMRAM_TEXT void pt_start(Ctrloop::FastRamContext *ctx, float vin, float vout)
     {
-        ctx->pt_softstart_duty_curr = cmpval::kMinSwitchDuty;
+        if (vin >= 1.0f)
+        {
+            // pre-biased startup (output capacitor is partially charged
+            // or an external voltage source is connected).
+            const float estimated_duty = vout / vin;
+            ctx->pt_softstart_duty_curr =
+                static_cast<uint32_t>(estimated_duty * kTimerCounterPeriod);
+        }
+        else
+        {
+            ctx->pt_softstart_duty_curr = cmpval::kMinSwitchDuty;
+        }
+
+        if (ctx->pt_softstart_duty_curr < cmpval::kMinSwitchDuty)
+            ctx->pt_softstart_duty_curr = cmpval::kMinSwitchDuty;
+        else if (ctx->pt_softstart_duty_curr > cmpval::kMaxDuty)
+            ctx->pt_softstart_duty_curr = cmpval::kMaxDuty;
+
         ctx->pt_state = Ctrloop::PtModeState::kSoftStart;
 
         hrtim_config_fixed_duty_leg(ctx->ll.hrtim, TIMER_L, OUT_L_HG, OUT_L_LG,
@@ -376,13 +393,13 @@ namespace
 
     GARNET_CCMRAM_TEXT void pt_run(Ctrloop::FastRamContext *ctx)
     {
-        if (ctx->pt_softstart_duty_curr >= cmpval::kMaxDuty)
+        if (ctx->pt_softstart_duty_curr > cmpval::kMaxDuty)
             return;
 
         LL_HRTIM_TIM_SetCompare3(ctx->ll.hrtim, TIMER_L, ctx->pt_softstart_duty_curr);
         ctx->pt_softstart_duty_curr += 3;
 
-        if (ctx->pt_softstart_duty_curr >= cmpval::kMaxDuty)
+        if (ctx->pt_softstart_duty_curr > cmpval::kMaxDuty)
             hrtim_config_pullup_leg(ctx->ll.hrtim, TIMER_L, OUT_L_HG, OUT_L_LG);
     }
 
@@ -438,7 +455,7 @@ GARNET_CCMRAM_TEXT void Ctrloop::on_adc_injected_irq()
             else if (requested_target.outstate == OutputState::kPassthrough)
             {
                 topo_conf_reset(ctx);
-                pt_start(ctx);
+                pt_start(ctx, v1, v2);
                 ctx->outstate = OutputState::kPassthrough;
             }
 
