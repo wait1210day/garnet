@@ -43,6 +43,12 @@ class Ctrloop
 public:
     using AtomicTargetReader = AtomicSnapshot<TargetSet>::Reader<Priority::kCtrloopIrq>;
 
+    enum class PtModeState
+    {
+        kSoftStart,
+        kSteadyState
+    };
+
     // This structure is supposed to be allocated in the fast CCM RAM,
     // e.g. statically placed in CCM RAM section defined by linker script.
     struct FastRamContext
@@ -74,6 +80,11 @@ public:
         OutputState outstate;
 
         uint32_t topo_nb_denergize_cycles;
+
+        // passthrough mode softstart cycles counter
+        uint32_t pt_softstart_duty_curr;
+        PtModeState pt_state;
+
         uint32_t mea_update_counter;
     };
 

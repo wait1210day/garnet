@@ -37,8 +37,35 @@ constexpr float kCvRampingStep = 0.005f;
 // Default HRTIM compare unit values
 namespace cmpval
 {
+    // Switching sequence:
+    //                   (master cmp3)                                     (new period)
+    //     COUNTER   0     kDeadtime1    EEV4/CMP3  EEV4/CMP3+kDeadtime2    0...
+    //  switch_out   x         S             R               x              x
+    //  syncre_out   R         x             x               S              R
+    //              (1)       (2)           (3)             (4)            (5)
+    //
+    // figure: x - not changed
+    //         S - output is set (turn on)
+    //         R - output is reset (turn off)
+    //
+    // 1. Start of a new period, `syncre_out` is reset by the PER event
+    // 2. `switch_out` is set by master compare 3 (=kDeadtime1)
+    // 3. `switch_out` is reset by EEV4 or CMP3, which has different semantics
+    //    according to the leg's mode:
+    //      - peak-current mode: EEV4 is the peak-current event, and CMP3 will
+    //        reset the output if EEV4 does not happen before CMP3. I.e. CMP3
+    //        is the maximum duty cycle limit.
+    //      - fixed-duty mode: EEV4 is disabled, and CMP3 determines the duty
+    //        cycle.
+    // 4. `syncre_out` is reset by HRTIM auto-delay mechanism (=EEV4+CMP4(=kDeadtime2)
+    //    if EEV4 is enabled, or =CMP3+CMP4 if EEV4 is disabled.
+    //
 
     constexpr uint32_t kDeadtime1 = 120;
+
+    // Minimum duty-cycle in FIXED-DUTY mode is limited by deadtime1
+    constexpr uint32_t kMinSwitchDuty = 240;
+
     constexpr uint32_t kDeadtime2 = 120;
     constexpr uint32_t kBlanking = 600;
     constexpr uint32_t kMaxDuty = 10200;
@@ -152,12 +179,15 @@ namespace
     }
 
     GARNET_CCMRAM_TEXT void hrtim_config_fixed_duty_leg(HRTIM_TypeDef *hrtim, uint32_t timer,
-                                                        uint32_t out_switch, uint32_t out_syncre, float duty)
+                                                        uint32_t out_switch, uint32_t out_syncre,
+                                                        uint32_t duty_cmp_value)
     {
-        auto cmp_value = static_cast<uint32_t>(duty * kTimerCounterPeriod);
-        if (cmp_value >= kTimerCounterPeriod)
-            cmp_value = kTimerCounterPeriod;
-        LL_HRTIM_TIM_SetCompare3(hrtim, timer, cmp_value);
+        if (duty_cmp_value >= kTimerCounterPeriod)
+            duty_cmp_value = kTimerCounterPeriod;
+        else if (duty_cmp_value <= cmpval::kMinSwitchDuty)
+            duty_cmp_value = cmpval::kMinSwitchDuty;
+
+        LL_HRTIM_TIM_SetCompare3(hrtim, timer, duty_cmp_value);
 
         LL_HRTIM_OUT_SetOutputSetSrc(hrtim, out_switch, LL_HRTIM_OUTPUTSET_MASTERCMP3);
         LL_HRTIM_OUT_SetOutputResetSrc(hrtim, out_switch, LL_HRTIM_OUTPUTRESET_TIMCMP3);
@@ -280,12 +310,14 @@ namespace
                     break;
 
                 case OpRegion::kBoostWithBuckAux:
-                    hrtim_config_fixed_duty_leg(ctx->ll.hrtim, TIMER_L, OUT_L_HG, OUT_L_LG, 0.85f);
+                    hrtim_config_fixed_duty_leg(ctx->ll.hrtim, TIMER_L, OUT_L_HG, OUT_L_LG,
+                                                static_cast<uint32_t>(0.85f * kTimerCounterPeriod));
                     hrtim_config_peak_curr_mode_leg(ctx->ll.hrtim, TIMER_R, OUT_R_LG, OUT_R_HG);
                     break;
 
                 case OpRegion::kBuckWithBoostAux:
-                    hrtim_config_fixed_duty_leg(ctx->ll.hrtim, TIMER_R, OUT_R_LG, OUT_R_HG, 0.15f);
+                    hrtim_config_fixed_duty_leg(ctx->ll.hrtim, TIMER_R, OUT_R_LG, OUT_R_HG,
+                                                static_cast<uint32_t>(0.15f * kTimerCounterPeriod));
                     hrtim_config_peak_curr_mode_leg(ctx->ll.hrtim, TIMER_L, OUT_L_HG, OUT_L_LG);
                     break;
 
@@ -329,6 +361,29 @@ namespace
     GARNET_CCMRAM_TEXT void topo_conf_reset(Ctrloop::FastRamContext *ctx)
     {
         ctx->topo_nb_denergize_cycles = 0;
+    }
+
+    // passthrough mode
+    GARNET_CCMRAM_TEXT void pt_start(Ctrloop::FastRamContext *ctx)
+    {
+        ctx->pt_softstart_duty_curr = cmpval::kMinSwitchDuty;
+        ctx->pt_state = Ctrloop::PtModeState::kSoftStart;
+
+        hrtim_config_fixed_duty_leg(ctx->ll.hrtim, TIMER_L, OUT_L_HG, OUT_L_LG,
+                                    ctx->pt_softstart_duty_curr);
+        hrtim_config_pullup_leg(ctx->ll.hrtim, TIMER_R, OUT_R_HG, OUT_R_LG);
+    }
+
+    GARNET_CCMRAM_TEXT void pt_run(Ctrloop::FastRamContext *ctx)
+    {
+        if (ctx->pt_softstart_duty_curr >= cmpval::kMaxDuty)
+            return;
+
+        LL_HRTIM_TIM_SetCompare3(ctx->ll.hrtim, TIMER_L, ctx->pt_softstart_duty_curr);
+        ctx->pt_softstart_duty_curr += 3;
+
+        if (ctx->pt_softstart_duty_curr >= cmpval::kMaxDuty)
+            hrtim_config_pullup_leg(ctx->ll.hrtim, TIMER_L, OUT_L_HG, OUT_L_LG);
     }
 
 } // namespace anonymous
@@ -382,16 +437,8 @@ GARNET_CCMRAM_TEXT void Ctrloop::on_adc_injected_irq()
             }
             else if (requested_target.outstate == OutputState::kPassthrough)
             {
-                // TODO(masshiroio): softstart in passthrough mode.
-                //                   In particular, configure the left leg in fixed-duty mode,
-                //                   right leg in pullup mode, and then rises the duty cycle
-                //                   linearly. This configuration is equivalent to a open-loop
-                //                   buck converter.
-
                 topo_conf_reset(ctx);
-
-                hrtim_config_pullup_leg(ctx->ll.hrtim, TIMER_L, OUT_L_HG, OUT_L_LG);
-                hrtim_config_pullup_leg(ctx->ll.hrtim, TIMER_R, OUT_R_HG, OUT_R_LG);
+                pt_start(ctx);
                 ctx->outstate = OutputState::kPassthrough;
             }
 
@@ -410,17 +457,10 @@ GARNET_CCMRAM_TEXT void Ctrloop::on_adc_injected_irq()
         }
     }
 
-    if (ctx->outstate == OutputState::kRegulated)
-        topo_conf_adaptive_fsbb(ctx, v1, v2);
-    else if (ctx->outstate == OutputState::kOff)
-    {
-        ctx->op_region = OpRegion::kIdle;
-        topo_conf_inductor_denergize(ctx);
-    }
-
     float iref = 0;
     if (ctx->outstate == OutputState::kRegulated)
     {
+        topo_conf_adaptive_fsbb(ctx, v1, v2);
         // TODO(masshiroio): implement pulse-skipping/burst mode, and constant-current loop
 
         // Soft start & soft setpoint transient (linear ramping)
@@ -452,6 +492,16 @@ GARNET_CCMRAM_TEXT void Ctrloop::on_adc_injected_irq()
             iref = iir_2p2z_update(&ctx->boost_cv_2p2z, ctx->boost_cv_coeffs, err, -2.0f, 30.0f);
             update_peak_current_sawtooth(ctx, iref, v2 - v1);
         }
+    }
+    else if (ctx->outstate == OutputState::kPassthrough)
+    {
+        ctx->op_region = OpRegion::kIdle;
+        pt_run(ctx);
+    }
+    else if (ctx->outstate == OutputState::kOff)
+    {
+        ctx->op_region = OpRegion::kIdle;
+        topo_conf_inductor_denergize(ctx);
     }
 
     if (++ctx->mea_update_counter > kMeasUpdatePrescaler)
@@ -504,6 +554,7 @@ ErrStatus Ctrloop::init(const Config& config, AtomicTargetReader&& target_reader
     fastctx->buck_cv_coeffs = kDefaultBuckCvCompCoeffs;
     fastctx->boost_cv_coeffs = kDefaultBoostCvCompCoeffs;
 
+    topo_conf_reset(fastctx);
     fastctx->mea_update_counter = 0;
 
     // Init slope compensation
