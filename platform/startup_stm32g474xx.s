@@ -25,6 +25,11 @@
   ******************************************************************************
   */
 
+  /**
+   * [masshiroio] note: this file deprecated, replaced by the pure cpp startup
+   * file `platform/startup.cpp`.
+   */
+
   .syntax unified
 	.cpu cortex-m4
 	.fpu softvfp
@@ -45,6 +50,12 @@ defined in linker script */
 /* end address for the .bss section. defined in linker script */
 .word	_ebss
 
+/**
+ * [masshiroio] This is a quite old legacy inherits from the STM32F1x era.
+ * The word 0xf1e0f85f is not an address but actually an encoded thumb-2 instruction:
+ *   ldr.w pc, [pc, #-480]
+ * If you are interested in it: https://stackoverflow.com/a/51005367
+ */
 .equ  BootRAM,        0xF1E0F85F
 /**
  * @brief  This is the code that gets called when the processor first

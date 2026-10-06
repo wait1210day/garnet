@@ -54,7 +54,7 @@ add_subdirectory(third_party/freertos)
 
 # Main application target
 add_executable(garnet
-    platform/startup_stm32g474xx.s
+    platform/startup.cpp
 
     src/base/utils.cpp
     src/base/panic.cpp
