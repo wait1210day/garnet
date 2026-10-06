@@ -52,7 +52,7 @@ struct adc_optimizer_context
     enum adc_optimizer_state state;
 };
 
-static inline GARNET_ALWAYS_INLINE
+GARNET_ALWAYS_INLINE static inline
 void adc_optimizer_update_sample(struct adc_optimizer_context *ctx, float err)
 {
     ctx->err_sum += err;
@@ -68,7 +68,7 @@ void adc_optimizer_update_sample(struct adc_optimizer_context *ctx, float err)
     }
 }
 
-static inline GARNET_ALWAYS_INLINE
+GARNET_ALWAYS_INLINE static inline
 uint32_t adc_optimizer_get_adc_trig_cmp(struct adc_optimizer_context *ctx)
 {
     return ctx->adc_trig_cmp;

@@ -69,7 +69,7 @@ static uint32_t scan_global_sse_valley(struct adc_optimizer_context *ctx, float 
     return min_trig + winsize / 2;
 }
 
-static GARNET_NORETURN void adc_optimizer_task(void *param)
+GARNET_NORETURN static void adc_optimizer_task(void *param)
 {
     struct adc_optimizer_context *ctx = reinterpret_cast<struct adc_optimizer_context *>(param);
 

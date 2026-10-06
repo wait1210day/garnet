@@ -4,12 +4,12 @@
 #ifndef GARNET_DEFS_H
 #define GARNET_DEFS_H
 
-#define GARNET_NORETURN       __attribute__((__noreturn__))
-#define GARNET_MAYBE_UNUSED   __attribute__((__unused__))
-#define GARNET_ALWAYS_INLINE  __attribute__((__always_inline__))
+#define GARNET_NORETURN       [[noreturn]]
+#define GARNET_MAYBE_UNUSED   [[maybe_unused]]
+#define GARNET_ALWAYS_INLINE  [[gnu::always_inline]]
 
-#define GARNET_CCMRAM_TEXT    __attribute__((__section__(".ccmram.text")))
-#define GARNET_CCMRAM_DATA    __attribute__((__section__(".ccmram.data")))
+#define GARNET_CCMRAM_TEXT    [[gnu::section(".ccmram.text")]]
+#define GARNET_CCMRAM_DATA    [[gnu::section(".ccmram.data")]]
 
 #define GARNET_NON_COPYABLE(type) \
     type(const type&) = delete; \
