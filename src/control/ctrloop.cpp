@@ -405,9 +405,33 @@ namespace
 
 } // namespace anonymous
 
+void Ctrloop::update_measures(FastRamContext *fctx,
+                              float v1, float v2, float i1, float i2, float iref)
+{
+    if (++fctx->mea_update_counter > kMeasUpdatePrescaler)
+    {
+        // Writing volatile variables is quite expensive, so we update them
+        // in a pre-scaled, relatively low frequency.
+        fctx->mea_update_counter = 0;
+        meas_.store({
+            .ctrl_state = fctx->ctrl_state,
+            .op_region = fctx->op_region,
+            .outstate = fctx->outstate,
+            .v1 = v1,
+            .v2 = v2,
+            .i1 = i1,
+            .i2 = i2,
+            .iref = iref
+        });
+    }
+}
+
 GARNET_CCMRAM_TEXT void Ctrloop::on_adc_injected_irq()
 {
     LL_GPIO_SetOutputPin(LPDBG_PULSE_GPIO_Port, LPDBG_PULSE_Pin);
+    ScopeExitGuard on_exit_gpio([] {
+        LL_GPIO_ResetOutputPin(LPDBG_PULSE_GPIO_Port, LPDBG_PULSE_Pin);
+    });
 
     FastRamContext *ctx = config_.fast_ram_ctx;
     ADC_TypeDef *ll_adc1 = ctx->ll.adc1, *ll_adc2 = ctx->ll.adc2;
@@ -429,6 +453,48 @@ GARNET_CCMRAM_TEXT void Ctrloop::on_adc_injected_irq()
     RD(v1, ll_adc2, LL_ADC_INJ_RANK_2)
     RD(v2, ll_adc2, LL_ADC_INJ_RANK_1)
 #undef RD
+
+    ControlState req_ctrl_state = requested_ctrl_state_.load(
+        std::memory_order_relaxed);
+
+    switch (ctx->ctrl_state)
+    {
+        case ControlState::kUnmanaged: [[unlikely]]
+        {
+            if (req_ctrl_state == ControlState::kOperational)
+            {
+                LL_HRTIM_EnableOutput(ctx->ll.hrtim, OUT_ALL);
+                LL_HRTIM_FLT_Enable(ctx->ll.hrtim, config_.hrtim_ovp_fault_num);
+
+                ctx->ctrl_state = ControlState::kOperational;
+            }
+            else
+            {
+                // unmanaged state: by-pass everything, only updating the
+                // measurements (feedback).
+                ctx->outstate = OutputState::kOff;
+                update_measures(ctx, v1, v2, i1, i2, 0);
+                return;
+            }
+            break;
+        }
+
+        case ControlState::kOperational:
+        {
+            if (req_ctrl_state == ControlState::kUnmanaged) [[unlikely]]
+            {
+                hrtim_config_highz_leg(ctx->ll.hrtim, TIMER_L, OUT_L_HG, OUT_L_LG);
+                hrtim_config_highz_leg(ctx->ll.hrtim, TIMER_R, OUT_R_HG, OUT_R_LG);
+                iir_2p2z_reset(&ctx->buck_cv_2p2z);
+                iir_2p2z_reset(&ctx->boost_cv_2p2z);
+                topo_conf_reset(ctx);
+
+                ctx->ctrl_state = ControlState::kUnmanaged;
+                return;
+            }
+            break;
+        }
+    }
 
     const TargetSet requested_target = target_reader_.load();
     switch (ctx->outstate)
@@ -521,21 +587,29 @@ GARNET_CCMRAM_TEXT void Ctrloop::on_adc_injected_irq()
         topo_conf_inductor_denergize(ctx);
     }
 
-    if (++ctx->mea_update_counter > kMeasUpdatePrescaler)
-    {
-        // Writing volatile variables is quite expensive, so we update them
-        // in a pre-scaled, relatively low frequency.
-        ctx->mea_update_counter = 0;
-        meas_.store({
-            .v1 = v1,
-            .v2 = v2,
-            .i1 = i1,
-            .i2 = i2,
-            .iref = iref
-        });
-    }
+    update_measures(ctx, v1, v2, i1, i2, iref);
+}
 
-    LL_GPIO_ResetOutputPin(LPDBG_PULSE_GPIO_Port, LPDBG_PULSE_Pin);
+void Ctrloop::on_hrtim_fault_irq()
+{
+    // HRTIM fault interruption, PWM output has been disabled by
+    // the fault circuitry before we reach here.
+    FastRamContext *fctx = config_.fast_ram_ctx;
+    HRTIM_TypeDef *hrtim = fctx->ll.hrtim;
+
+    if (llhelper::hrtim_has_intr_fault_flag(hrtim, config_.hrtim_ovp_fault_num))
+    {
+        llhelper::hrtim_clear_intr_fault_flag(hrtim, config_.hrtim_ovp_fault_num);
+        // Disable the fault line to prevent interrupt flooding.
+        // We will lock at fault state in software.
+        LL_HRTIM_FLT_Disable(hrtim, config_.hrtim_ovp_fault_num);
+
+        // Although the PWM has been disabled, we do it again manually
+        // for better safety.
+        LL_HRTIM_DisableOutput(hrtim, OUT_ALL);
+
+        requested_ctrl_state_ = ControlState::kUnmanaged;
+    }
 }
 
 static void init_slope_comp_coeff(Ctrloop::FastRamContext *fastctx)
@@ -566,6 +640,9 @@ ErrStatus Ctrloop::init(const Config& config, AtomicTargetReader&& target_reader
     fastctx->ll.adc2 = config.ll_adc2;
     fastctx->ll.hrtim = config.ll_hrtim;
     fastctx->ll.dac_pcmc = config.dac_pcmc->Instance;
+
+    fastctx->ctrl_state = ControlState::kOperational;
+
     fastctx->cali = *config_.cali;
 
     fastctx->buck_cv_coeffs = kDefaultBuckCvCompCoeffs;
@@ -654,6 +731,9 @@ ErrStatus Ctrloop::init(const Config& config, AtomicTargetReader&& target_reader
 
     LL_HRTIM_TIM_CounterEnable(ll_hrtim, TIMER_L | TIMER_R | LL_HRTIM_TIMER_MASTER);
     LL_HRTIM_EnableOutput(ll_hrtim, OUT_L_HG | OUT_L_LG | OUT_R_HG | OUT_R_LG);
+
+    // Enable protections
+    LL_HRTIM_EnableIT_FLT4(ll_hrtim);
 
     return ErrStatus::kOk;
 }

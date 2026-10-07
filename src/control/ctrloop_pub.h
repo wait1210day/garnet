@@ -36,6 +36,24 @@ struct TargetSet
     float iout;
 };
 
+enum class ControlState
+{
+    kUnmanaged,
+    kOperational
+};
+
+struct Measures
+{
+    ControlState ctrl_state = ControlState::kUnmanaged;
+    OpRegion op_region = OpRegion::kIdle;
+    OutputState outstate = OutputState::kOff;
+    float v1 = 0;
+    float v2 = 0;
+    float i1 = 0;
+    float i2 = 0;
+    float iref = 0;
+};
+
 } // namespace ctrl
 
 #endif //GARNET_CTRLOOP_PUB_H

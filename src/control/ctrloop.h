@@ -29,15 +29,6 @@ struct Iir2p2zComp
     float y_n2;
 };
 
-struct Measures
-{
-    float v1 = 0;
-    float v2 = 0;
-    float i1 = 0;
-    float i2 = 0;
-    float iref = 0;
-};
-
 class Ctrloop
 {
 public:
@@ -62,6 +53,8 @@ public:
         };
 
         Peripherals ll;
+
+        ControlState ctrl_state;
 
         AdcCaliCoeffs cali;
         float cv_setpoint_ramping;
@@ -93,6 +86,7 @@ public:
         ADC_TypeDef *ll_adc1;
         ADC_TypeDef *ll_adc2;
         HRTIM_TypeDef *ll_hrtim;
+        uint32_t hrtim_ovp_fault_num;
         DAC_HandleTypeDef *dac_pcmc;
         DAC_HandleTypeDef *dac_zcd;
         COMP_HandleTypeDef *comp_pcmc;
@@ -105,9 +99,12 @@ public:
     [[nodiscard]] ErrStatus init(const Config& config, AtomicTargetReader&& target_reader);
 
     GARNET_CCMRAM_TEXT void on_adc_injected_irq();
+    void on_hrtim_fault_irq();
 
-#define CTRLOOP_IRQ_HANDLER_IMPL(sym, instance, type) \
+#define CTRLOOP_FAST_IRQ_HANDLER_IMPL(sym, instance, type) \
     extern "C" GARNET_CCMRAM_TEXT void sym() { (instance).on_##type##_irq(); }
+#define CTRLOOP_IRQ_HANDLER_IMPL(sym, instance, type) \
+    extern "C" void sym() { (instance).on_##type##_irq(); }
 
     // Multiple readers are allowed, and the caller may be blocked.
     [[nodiscard]] auto& get_measures_reader()
@@ -115,9 +112,25 @@ public:
         return meas_;
     }
 
+    // Clear the unmanaged state and try to bring the control loop back to normal
+    // operational state. The unmanaged state is caused by a HRTIM fault event.
+    //
+    // Once we get back to operational state, the fault lines will be enabled
+    // immediately, and return to unmanaged state if an fault event is triggered
+    // again (even if the output is not enabled).
+    void clear_unmanaged_state()
+    {
+        requested_ctrl_state_.store(
+            ControlState::kOperational, std::memory_order_relaxed);
+    }
+
 private:
+    GARNET_CCMRAM_TEXT void update_measures(FastRamContext *fctx,
+        float v1, float v2, float i1, float i2, float iref);
+
     Config config_{};
     AtomicTargetReader target_reader_;
+    std::atomic<ControlState> requested_ctrl_state_ = ControlState::kOperational;
     SingleCoreSeqlock<Measures, Priority::kCtrloopIrq> meas_{{}};
 };
 

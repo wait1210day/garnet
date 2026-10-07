@@ -81,7 +81,8 @@ Janus g_janus;
 
 
 
-CTRLOOP_IRQ_HANDLER_IMPL(ADC1_2_IRQHandler, g_ctrl, adc_injected)
+CTRLOOP_FAST_IRQ_HANDLER_IMPL(ADC1_2_IRQHandler, g_ctrl, adc_injected)
+CTRLOOP_IRQ_HANDLER_IMPL(HRTIM1_FLT_IRQHandler, g_ctrl, hrtim_fault)
 
 I2C_BUS_IRQ_HANDLER_IMPL(I2C1_EV_IRQHandler, g_i2c_bus_onboard, i2c_event)
 I2C_BUS_IRQ_HANDLER_IMPL(I2C1_ER_IRQHandler, g_i2c_bus_onboard, i2c_error)
@@ -464,6 +465,7 @@ void init_and_spawn_task(void*)
             .ll_adc1 = g_periphs.ll_adc1,
             .ll_adc2 = g_periphs.ll_adc2,
             .ll_hrtim = g_periphs.ll_hrtim,
+            .hrtim_ovp_fault_num = LL_HRTIM_FAULT_4,
             .dac_pcmc = g_periphs.dac_pcmc,
             .dac_zcd = g_periphs.dac_zcd,
             .comp_pcmc = g_periphs.comp_pcmc,
@@ -532,6 +534,8 @@ void init_and_spawn_task(void*)
             auto stack_high_mark = uxTaskGetStackHighWaterMark(nullptr);
             FUMI_LOGI(kTAG, "%.02fV;%.02fA %.02fV;%.02fA eff=%.03f iref=%.02f temp=%.02f,%.02f [st %lu words]",
                 v1, i1, v2, i2, eff, meas.iref, temp1, temp2, stack_high_mark);
+            FUMI_LOGI(kTAG, "ctrl=%s",
+                meas.ctrl_state == ctrl::ControlState::kUnmanaged ? "unmanaged" : "operational");
 
             prescaler = 0;
         }

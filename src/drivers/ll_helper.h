@@ -9,8 +9,10 @@
 
 #include "stm32g4xx_ll_adc.h"
 #include "stm32g4xx_ll_dma.h"
+#include "stm32g4xx_ll_hrtim.h"
 
 #include "base/err.h"
+#include "base/panic.h"
 
 // Very thing wrapper for LL library, a stateless version of HAL.
 
@@ -54,6 +56,40 @@ inline uint32_t dma_get_intr_flags(DMA_TypeDef *dma, uint32_t channel)
 {
     static_assert(LL_DMA_CHANNEL_1 == 0, "dma channel number must start from 0");
     return LL_DMA_ReadReg(dma, ISR) >> (4 * channel);
+}
+
+inline bool hrtim_has_intr_fault_flag(HRTIM_TypeDef *hrtim, uint32_t fault_num)
+{
+    static_assert(LL_HRTIM_FAULT_1 == HRTIM_ISR_FLT1
+                  && LL_HRTIM_FAULT_2 == HRTIM_ISR_FLT2
+                  && LL_HRTIM_FAULT_3 == HRTIM_ISR_FLT3
+                  && LL_HRTIM_FAULT_4 == HRTIM_ISR_FLT4
+                  && LL_HRTIM_FAULT_5 == HRTIM_ISR_FLT5,
+                  "LL_HRTIM_FAULT_x definition not satisfies the assumption");
+
+    // `LL_HRTIM_FAULT_6 != HRTIM_ISR_FLT6` since the `HRTIM_ISR[5]` bit
+    // is occupied by SYSFLT instead of FLT6.
+    if (fault_num == LL_HRTIM_FAULT_6)
+        return LL_HRTIM_IsActiveFlag_FLT6(hrtim);
+
+    return (hrtim->sCommonRegs.ISR & fault_num) == fault_num;
+}
+
+inline void hrtim_clear_intr_fault_flag(HRTIM_TypeDef *hrtim, uint32_t fault_num)
+{
+    static_assert(LL_HRTIM_FAULT_1 == HRTIM_ICR_FLT1C
+                  && LL_HRTIM_FAULT_2 == HRTIM_ICR_FLT2C
+                  && LL_HRTIM_FAULT_3 == HRTIM_ICR_FLT3C
+                  && LL_HRTIM_FAULT_4 == HRTIM_ICR_FLT4C
+                  && LL_HRTIM_FAULT_5 == HRTIM_ICR_FLT5C,
+                  "LL_HRTIM_FAULT_x definition not satisfies the assumption");
+
+    // `LL_HRTIM_FAULT_6 != HRTIM_ICR_FLT6C` since the `HRTIM_ICR[5]` bit
+    // is occupied by SYSFLT instead of FLT6.
+    if (fault_num == LL_HRTIM_FAULT_6)
+        return LL_HRTIM_ClearFlag_FLT6(hrtim);
+
+    hrtim->sCommonRegs.ICR |= fault_num;
 }
 
 } // namespace llhelper
