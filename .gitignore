@@ -11,5 +11,5 @@
 **/__pycache__/
 *.pyc
 
-/third_party/*
+/third_party/cubemx/*
 !/third_party/cubemx/cubemx.ioc
