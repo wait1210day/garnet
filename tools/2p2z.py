@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 
+# SPDX-FileCopyrightText: 2026 masshiroio <masshirosora.io@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 from dataclasses import dataclass
 from math import pi, log10, log2, ceil
 

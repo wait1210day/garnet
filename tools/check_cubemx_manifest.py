@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Compare CubeMX's literal CMake lists with our adapter, without executing CMake.
+
+# SPDX-FileCopyrightText: 2026 masshiroio <masshirosora.io@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+"""
+Compare CubeMX's literal CMake lists with our adapter, without executing CMake.
 
 This is intentionally not a CMake interpreter. Supported lists use whitespace or
 semicolon separators, optional quotes and line comments. Variable expansion,

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 masshiroio <masshirosora.io@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # Project-owned adapter. Never include/add_subdirectory the generated CMake:
 # it injects sources into CMAKE_PROJECT_NAME instead of providing a library.
 get_filename_component(cubemx_root

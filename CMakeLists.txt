@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 masshiroio <masshirosora.io@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 cmake_minimum_required(VERSION 3.22)
 
 # A plain `cmake -S . -B ...` also selects the project's cross toolchain.

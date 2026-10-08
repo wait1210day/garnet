@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 masshiroio <masshirosora.io@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # Cross-compilation environment only; MCU and firmware policy live at the root.
 set(CMAKE_SYSTEM_NAME Generic)
 set(CMAKE_SYSTEM_PROCESSOR arm)
