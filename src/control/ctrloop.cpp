@@ -1,6 +1,17 @@
 // SPDX-FileCopyrightText: 2026 masshiroio <masshirosora.io@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+// The modulation strategy and hysteresis boundary logic implemented herein are
+// independently developed and inspired by publicly available documentation of
+// synchronous 4-switch buck-boost architectures (specifically referencing the
+// operational principles described in Analog Devices / Linear Technology LT8390 datasheet).
+//
+// All code is an original software implementation written for STM32G474 HRTIM.
+//
+// "LT8390" and related terms are trademarks of Analog Devices, Inc.
+// This project is an independent open-source effort and is NOT affiliated with,
+// sponsored, or endorsed by Analog Devices, Inc.
+
 #include <cstring>
 #include <cmath>
 
