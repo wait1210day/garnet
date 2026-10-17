@@ -113,6 +113,53 @@ constexpr laplace::DiscreteComp kDefaultBoostCvCompCoeffs =
 
 namespace
 {
+    // Suspend Timer B/D preload transfers while writing each complete topology
+    // configuration, then resume updates at the next configured timer event.
+    //
+    // Since the shadow registers are configured to update at the start of a
+    // PWM PERIOD, and our fsw/2 == fsample(fcontrol):
+    //
+    //    preload               preload             preload
+    //    update                update              update
+    //      V                    V                    V
+    //      ------------         ------------         ------------
+    //      |          |         |          |         |          |
+    //  -----          -----------          -----------          -----
+    //
+    //    ADC trigger
+    //      V
+    //      ---------------------------------         ----------------
+    //      |                               |         |
+    //  -----                               -----------
+    //                      |----------|
+    //                 (writing shadow registers)
+    //                           ^
+    //                           ` race condition: partially written!
+    //
+    // So use this RAII guard to protect HRTIM register writes. A race condition here
+    // merely defers the shadow register update to the next PWM rising edge.
+    // This transient latency is acceptable since HRTIM writes only happen during
+    // topology/timing changes, while fast control loop outputs target the DAC directly.
+    class UpdateProhibitedScope
+    {
+    public:
+        GARNET_NON_COPYABLE(UpdateProhibitedScope)
+        GARNET_NON_MOVABLE(UpdateProhibitedScope)
+
+        constexpr static uint32_t kUpdateMask = HRTIM_CR1_TBUDIS | HRTIM_CR1_TDUDIS;
+
+        INISR UpdateProhibitedScope(HRTIM_TypeDef *hrtim) : hrtim_(hrtim) {
+            SET_BIT(hrtim->sCommonRegs.CR1, kUpdateMask);
+        }
+
+        INISR ~UpdateProhibitedScope() {
+            CLEAR_BIT(hrtim_->sCommonRegs.CR1, kUpdateMask);
+        }
+
+    private:
+        HRTIM_TypeDef *hrtim_;
+    };
+
     INISR float iir_2p2z_update(Iir2p2zComp *comp, const laplace::DiscreteComp<float>& coeffs,
                                 float err, float sat_min, float sat_max)
     {
@@ -311,6 +358,7 @@ namespace
 
         if (ctx->op_region != next_op_region)
         {
+            UpdateProhibitedScope scope(ctx->ll.hrtim);
             // Switch topology
             ctx->op_region = next_op_region;
             switch (next_op_region)
@@ -349,6 +397,7 @@ namespace
         // Inductor de-energize mode
         if (ctx->topo_nb_denergize_cycles == 0)
         {
+            UpdateProhibitedScope scope(ctx->ll.hrtim);
             // First de-energize cycle, switch our topology first.
             hrtim_config_pulldown_leg(ctx->ll.hrtim, TIMER_L, OUT_L_HG, OUT_L_LG);
             hrtim_config_pulldown_leg(ctx->ll.hrtim, TIMER_R, OUT_R_HG, OUT_R_LG);
@@ -360,6 +409,7 @@ namespace
 
         if (ctx->topo_nb_denergize_cycles == 100)
         {
+            UpdateProhibitedScope scope(ctx->ll.hrtim);
             hrtim_config_highz_leg(ctx->ll.hrtim, TIMER_L, OUT_L_HG, OUT_L_LG);
             hrtim_config_highz_leg(ctx->ll.hrtim, TIMER_R, OUT_R_HG, OUT_R_LG);
 
@@ -397,6 +447,8 @@ namespace
 
         ctx->pt_state = Ctrloop::PtModeState::kSoftStart;
 
+        UpdateProhibitedScope scope(ctx->ll.hrtim);
+
         hrtim_config_fixed_duty_leg(ctx->ll.hrtim, TIMER_L, OUT_L_HG, OUT_L_LG,
                                     ctx->pt_softstart_duty_curr);
         hrtim_config_pullup_leg(ctx->ll.hrtim, TIMER_R, OUT_R_HG, OUT_R_LG);
@@ -407,6 +459,7 @@ namespace
         if (ctx->pt_softstart_duty_curr > cmpval::kMaxDuty)
             return;
 
+        UpdateProhibitedScope scope(ctx->ll.hrtim);
         LL_HRTIM_TIM_SetCompare3(ctx->ll.hrtim, TIMER_L, ctx->pt_softstart_duty_curr);
         ctx->pt_softstart_duty_curr += 3;
 
@@ -494,6 +547,7 @@ GARNET_CCMRAM_TEXT void Ctrloop::on_adc_injected_irq()
         {
             if (req_ctrl_state == ControlState::kUnmanaged) [[unlikely]]
             {
+                UpdateProhibitedScope scope(ctx->ll.hrtim);
                 hrtim_config_highz_leg(ctx->ll.hrtim, TIMER_L, OUT_L_HG, OUT_L_LG);
                 hrtim_config_highz_leg(ctx->ll.hrtim, TIMER_R, OUT_R_HG, OUT_R_LG);
                 iir_2p2z_reset(&ctx->buck_cv_2p2z);
