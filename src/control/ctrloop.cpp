@@ -26,6 +26,7 @@
 #include "base/cali.h"
 #include "drivers/ll_helper.h"
 #include "control/laplace.h"
+#include "control/fast_ll.h"
 #include "control/ctrloop.h"
 #include "services/fumi.h"
 
@@ -217,92 +218,92 @@ namespace
         LL_DAC_SetWaveSawtoothStepData(ctx->ll.dac_pcmc, LL_DAC_CHANNEL_1, step_val_raw);
     }
 
-    template<bool kDiodeEmulation = false>
-    GARNET_CCMRAM_TEXT void hrtim_config_peak_curr_mode_leg(HRTIM_TypeDef *hrtim, uint32_t timer,
-                                                            uint32_t out_switch, uint32_t out_syncre)
+    // Keep the leg identifiers constant through to fastll register selection.
+    template<uint32_t kTimer, uint32_t kOutSwitch, uint32_t kOutSyncre, bool kDem = false>
+    GARNET_CCMRAM_TEXT void hrtim_config_peak_curr_mode_leg(HRTIM_TypeDef *hrtim)
     {
-        LL_HRTIM_TIM_SetCompare3(hrtim, timer, cmpval::kMaxDuty);
+        fastll::hrtim_set_compare3<kTimer>(hrtim, cmpval::kMaxDuty);
 
-        LL_HRTIM_OUT_SetOutputSetSrc(hrtim, out_switch, LL_HRTIM_OUTPUTSET_MASTERCMP3);
-        LL_HRTIM_OUT_SetOutputResetSrc(hrtim, out_switch, LL_HRTIM_OUTPUTRESET_TIMCMP3 | LL_HRTIM_OUTPUTRESET_EEV_4);
-        LL_HRTIM_OUT_SetOutputSetSrc(hrtim, out_syncre, LL_HRTIM_OUTPUTSET_TIMCMP4);
+        fastll::hrtim_set_output_set_source<kOutSwitch>(hrtim, LL_HRTIM_OUTPUTSET_MASTERCMP3);
+        fastll::hrtim_set_output_reset_source<kOutSwitch>(
+            hrtim, LL_HRTIM_OUTPUTRESET_TIMCMP3 | LL_HRTIM_OUTPUTRESET_EEV_4);
+        fastll::hrtim_set_output_set_source<kOutSyncre>(hrtim, LL_HRTIM_OUTPUTSET_TIMCMP4);
 
         uint32_t reset_source = LL_HRTIM_OUTPUTRESET_TIMPER;
-        if constexpr (kDiodeEmulation)
+        if constexpr (kDem)
             reset_source |= LL_HRTIM_OUTPUTRESET_EEV_2;
-        LL_HRTIM_OUT_SetOutputResetSrc(hrtim, out_syncre, reset_source);
+        fastll::hrtim_set_output_reset_source<kOutSyncre>(hrtim, reset_source);
 
         // enable peak-current event
-        LL_HRTIM_TIM_SetCaptureTrig(hrtim, timer, LL_HRTIM_CAPTUREUNIT_2, LL_HRTIM_CAPTURETRIG_EEV_4);
+        fastll::hrtim_set_capture_trigger<kTimer, LL_HRTIM_CAPTUREUNIT_2, LL_HRTIM_CAPTURETRIG_EEV_4>(hrtim);
     }
 
-    GARNET_CCMRAM_TEXT void hrtim_config_fixed_duty_leg(HRTIM_TypeDef *hrtim, uint32_t timer,
-                                                        uint32_t out_switch, uint32_t out_syncre,
-                                                        uint32_t duty_cmp_value)
+    template<uint32_t kTimer, uint32_t kOutSwitch, uint32_t kOutSyncre>
+    GARNET_CCMRAM_TEXT void hrtim_config_fixed_duty_leg(HRTIM_TypeDef *hrtim, uint32_t duty_cmp_value)
     {
         if (duty_cmp_value >= kTimerCounterPeriod)
             duty_cmp_value = kTimerCounterPeriod;
         else if (duty_cmp_value <= cmpval::kMinSwitchDuty)
             duty_cmp_value = cmpval::kMinSwitchDuty;
 
-        LL_HRTIM_TIM_SetCompare3(hrtim, timer, duty_cmp_value);
+        fastll::hrtim_set_compare3<kTimer>(hrtim, duty_cmp_value);
 
-        LL_HRTIM_OUT_SetOutputSetSrc(hrtim, out_switch, LL_HRTIM_OUTPUTSET_MASTERCMP3);
-        LL_HRTIM_OUT_SetOutputResetSrc(hrtim, out_switch, LL_HRTIM_OUTPUTRESET_TIMCMP3);
+        fastll::hrtim_set_output_set_source<kOutSwitch>(hrtim, LL_HRTIM_OUTPUTSET_MASTERCMP3);
+        fastll::hrtim_set_output_reset_source<kOutSwitch>(hrtim, LL_HRTIM_OUTPUTRESET_TIMCMP3);
 
         // deadtime inserted: in auto-delay mode, this output will be set when the counter
         // reaches `CMP3 + CMP4` if capture is not triggered.
-        LL_HRTIM_OUT_SetOutputSetSrc(hrtim, out_syncre, LL_HRTIM_OUTPUTSET_TIMCMP4);
-        LL_HRTIM_OUT_SetOutputResetSrc(hrtim, out_syncre, LL_HRTIM_OUTPUTRESET_TIMPER);
+        fastll::hrtim_set_output_set_source<kOutSyncre>(hrtim, LL_HRTIM_OUTPUTSET_TIMCMP4);
+        fastll::hrtim_set_output_reset_source<kOutSyncre>(hrtim, LL_HRTIM_OUTPUTRESET_TIMPER);
 
         // Disable capture trigger, so that capture timeout event will be triggered and
-        // `out_syncre` will be set when counter reaches `CMP3 + CMP4` by auto-delay mechanism.
-        LL_HRTIM_TIM_SetCaptureTrig(hrtim, timer, LL_HRTIM_CAPTUREUNIT_2, LL_HRTIM_CAPTURETRIG_NONE);
+        // `kOutSyncre` will be set when counter reaches `CMP3 + CMP4` by auto-delay mechanism.
+        fastll::hrtim_set_capture_trigger<kTimer, LL_HRTIM_CAPTUREUNIT_2, LL_HRTIM_CAPTURETRIG_NONE>(hrtim);
     }
 
-    GARNET_CCMRAM_TEXT void hrtim_config_highz_leg(HRTIM_TypeDef *hrtim, uint32_t timer,
-                                                   uint32_t out_high, uint32_t out_low)
+    template<uint32_t kTimer, uint32_t kOutHigh, uint32_t kOutLow>
+    GARNET_CCMRAM_TEXT void hrtim_config_highz_leg(HRTIM_TypeDef *hrtim)
     {
-        LL_HRTIM_TIM_SetCompare3(hrtim, timer, cmpval::kDeadtime1);
+        fastll::hrtim_set_compare3<kTimer>(hrtim, cmpval::kDeadtime1);
 
-        LL_HRTIM_OUT_SetOutputSetSrc(hrtim, out_high, 0);
-        LL_HRTIM_OUT_SetOutputResetSrc(hrtim, out_high, LL_HRTIM_OUTPUTRESET_TIMCMP3);
+        fastll::hrtim_set_output_set_source<kOutHigh>(hrtim, 0);
+        fastll::hrtim_set_output_reset_source<kOutHigh>(hrtim, LL_HRTIM_OUTPUTRESET_TIMCMP3);
 
-        LL_HRTIM_OUT_SetOutputSetSrc(hrtim, out_low, 0);
-        LL_HRTIM_OUT_SetOutputResetSrc(hrtim, out_low, LL_HRTIM_OUTPUTRESET_TIMPER);
+        fastll::hrtim_set_output_set_source<kOutLow>(hrtim, 0);
+        fastll::hrtim_set_output_reset_source<kOutLow>(hrtim, LL_HRTIM_OUTPUTRESET_TIMPER);
 
-        LL_HRTIM_TIM_SetCaptureTrig(hrtim, timer, LL_HRTIM_CAPTUREUNIT_2, LL_HRTIM_CAPTURETRIG_NONE);
+        fastll::hrtim_set_capture_trigger<kTimer, LL_HRTIM_CAPTUREUNIT_2, LL_HRTIM_CAPTURETRIG_NONE>(hrtim);
     }
 
     // High-side constant ON is achievable since the existence of isolated auxiliary
     // power supply.
-    GARNET_CCMRAM_TEXT void hrtim_config_pullup_leg(HRTIM_TypeDef *hrtim, uint32_t timer,
-                                                    uint32_t out_high, uint32_t out_low)
+    template<uint32_t kTimer, uint32_t kOutHigh, uint32_t kOutLow>
+    GARNET_CCMRAM_TEXT void hrtim_config_pullup_leg(HRTIM_TypeDef *hrtim)
     {
-        LL_HRTIM_TIM_SetCompare3(hrtim, timer, cmpval::kMaxDuty);
+        fastll::hrtim_set_compare3<kTimer>(hrtim, cmpval::kMaxDuty);
 
-        LL_HRTIM_OUT_SetOutputSetSrc(hrtim, out_high, LL_HRTIM_OUTPUTSET_MASTERCMP3);
-        LL_HRTIM_OUT_SetOutputResetSrc(hrtim, out_high, 0);
-        LL_HRTIM_OUT_SetOutputSetSrc(hrtim, out_low, 0);
-        LL_HRTIM_OUT_SetOutputResetSrc(hrtim, out_low, LL_HRTIM_OUTPUTRESET_TIMPER);
+        fastll::hrtim_set_output_set_source<kOutHigh>(hrtim, LL_HRTIM_OUTPUTSET_MASTERCMP3);
+        fastll::hrtim_set_output_reset_source<kOutHigh>(hrtim, 0);
+        fastll::hrtim_set_output_set_source<kOutLow>(hrtim, 0);
+        fastll::hrtim_set_output_reset_source<kOutLow>(hrtim, LL_HRTIM_OUTPUTRESET_TIMPER);
 
         // peak-current event should not trigger the capture unit,
         // since we're working in pass-through mode.
-        LL_HRTIM_TIM_SetCaptureTrig(hrtim, timer, LL_HRTIM_CAPTUREUNIT_2, LL_HRTIM_CAPTURETRIG_NONE);
+        fastll::hrtim_set_capture_trigger<kTimer, LL_HRTIM_CAPTUREUNIT_2, LL_HRTIM_CAPTURETRIG_NONE>(hrtim);
     }
 
-    GARNET_CCMRAM_TEXT void hrtim_config_pulldown_leg(HRTIM_TypeDef *hrtim, uint32_t timer,
-                                                      uint32_t out_high, uint32_t out_low)
+    template<uint32_t kTimer, uint32_t kOutHigh, uint32_t kOutLow>
+    GARNET_CCMRAM_TEXT void hrtim_config_pulldown_leg(HRTIM_TypeDef *hrtim)
     {
-        LL_HRTIM_TIM_SetCompare3(hrtim, timer, cmpval::kDeadtime1);
+        fastll::hrtim_set_compare3<kTimer>(hrtim, cmpval::kDeadtime1);
 
-        LL_HRTIM_OUT_SetOutputSetSrc(hrtim, out_high, 0);
-        LL_HRTIM_OUT_SetOutputResetSrc(hrtim, out_high, LL_HRTIM_OUTPUTRESET_TIMCMP3);
+        fastll::hrtim_set_output_set_source<kOutHigh>(hrtim, 0);
+        fastll::hrtim_set_output_reset_source<kOutHigh>(hrtim, LL_HRTIM_OUTPUTRESET_TIMCMP3);
 
-        LL_HRTIM_OUT_SetOutputSetSrc(hrtim, out_low, LL_HRTIM_OUTPUTSET_TIMCMP4);
-        LL_HRTIM_OUT_SetOutputResetSrc(hrtim, out_low, 0);
+        fastll::hrtim_set_output_set_source<kOutLow>(hrtim, LL_HRTIM_OUTPUTSET_TIMCMP4);
+        fastll::hrtim_set_output_reset_source<kOutLow>(hrtim, 0);
 
-        LL_HRTIM_TIM_SetCaptureTrig(hrtim, timer, LL_HRTIM_CAPTUREUNIT_2, LL_HRTIM_CAPTURETRIG_NONE);
+        fastll::hrtim_set_capture_trigger<kTimer, LL_HRTIM_CAPTUREUNIT_2, LL_HRTIM_CAPTURETRIG_NONE>(hrtim);
     }
 
 
@@ -364,25 +365,25 @@ namespace
             switch (next_op_region)
             {
                 case OpRegion::kBoost:
-                    hrtim_config_pullup_leg(ctx->ll.hrtim, TIMER_L, OUT_L_HG, OUT_L_LG);
-                    hrtim_config_peak_curr_mode_leg(ctx->ll.hrtim, TIMER_R, OUT_R_LG, OUT_R_HG);
+                    hrtim_config_pullup_leg<TIMER_L, OUT_L_HG, OUT_L_LG>(ctx->ll.hrtim);
+                    hrtim_config_peak_curr_mode_leg<TIMER_R, OUT_R_LG, OUT_R_HG>(ctx->ll.hrtim);
                     break;
 
                 case OpRegion::kBoostWithBuckAux:
-                    hrtim_config_fixed_duty_leg(ctx->ll.hrtim, TIMER_L, OUT_L_HG, OUT_L_LG,
-                                                static_cast<uint32_t>(0.85f * kTimerCounterPeriod));
-                    hrtim_config_peak_curr_mode_leg(ctx->ll.hrtim, TIMER_R, OUT_R_LG, OUT_R_HG);
+                    hrtim_config_fixed_duty_leg<TIMER_L, OUT_L_HG, OUT_L_LG>(
+                        ctx->ll.hrtim, static_cast<uint32_t>(0.85f * kTimerCounterPeriod));
+                    hrtim_config_peak_curr_mode_leg<TIMER_R, OUT_R_LG, OUT_R_HG>(ctx->ll.hrtim);
                     break;
 
                 case OpRegion::kBuckWithBoostAux:
-                    hrtim_config_fixed_duty_leg(ctx->ll.hrtim, TIMER_R, OUT_R_LG, OUT_R_HG,
-                                                static_cast<uint32_t>(0.15f * kTimerCounterPeriod));
-                    hrtim_config_peak_curr_mode_leg(ctx->ll.hrtim, TIMER_L, OUT_L_HG, OUT_L_LG);
+                    hrtim_config_fixed_duty_leg<TIMER_R, OUT_R_LG, OUT_R_HG>(
+                        ctx->ll.hrtim, static_cast<uint32_t>(0.15f * kTimerCounterPeriod));
+                    hrtim_config_peak_curr_mode_leg<TIMER_L, OUT_L_HG, OUT_L_LG>(ctx->ll.hrtim);
                     break;
 
                 case OpRegion::kBuck:
-                    hrtim_config_pullup_leg(ctx->ll.hrtim, TIMER_R, OUT_R_HG, OUT_R_LG);
-                    hrtim_config_peak_curr_mode_leg(ctx->ll.hrtim, TIMER_L, OUT_L_HG, OUT_L_LG);
+                    hrtim_config_pullup_leg<TIMER_R, OUT_R_HG, OUT_R_LG>(ctx->ll.hrtim);
+                    hrtim_config_peak_curr_mode_leg<TIMER_L, OUT_L_HG, OUT_L_LG>(ctx->ll.hrtim);
                     break;
 
                 case OpRegion::kIdle:
@@ -399,8 +400,8 @@ namespace
         {
             UpdateProhibitedScope scope(ctx->ll.hrtim);
             // First de-energize cycle, switch our topology first.
-            hrtim_config_pulldown_leg(ctx->ll.hrtim, TIMER_L, OUT_L_HG, OUT_L_LG);
-            hrtim_config_pulldown_leg(ctx->ll.hrtim, TIMER_R, OUT_R_HG, OUT_R_LG);
+            hrtim_config_pulldown_leg<TIMER_L, OUT_L_HG, OUT_L_LG>(ctx->ll.hrtim);
+            hrtim_config_pulldown_leg<TIMER_R, OUT_R_HG, OUT_R_LG>(ctx->ll.hrtim);
         }
 
         // Wait for 100 sampling cycles (4us * 100 = 400us)
@@ -410,8 +411,8 @@ namespace
         if (ctx->topo_nb_denergize_cycles == 100)
         {
             UpdateProhibitedScope scope(ctx->ll.hrtim);
-            hrtim_config_highz_leg(ctx->ll.hrtim, TIMER_L, OUT_L_HG, OUT_L_LG);
-            hrtim_config_highz_leg(ctx->ll.hrtim, TIMER_R, OUT_R_HG, OUT_R_LG);
+            hrtim_config_highz_leg<TIMER_L, OUT_L_HG, OUT_L_LG>(ctx->ll.hrtim);
+            hrtim_config_highz_leg<TIMER_R, OUT_R_HG, OUT_R_LG>(ctx->ll.hrtim);
 
             // To prevent this branch being executed in the following cycles.
             // Since LL calls are expensive.
@@ -449,9 +450,9 @@ namespace
 
         UpdateProhibitedScope scope(ctx->ll.hrtim);
 
-        hrtim_config_fixed_duty_leg(ctx->ll.hrtim, TIMER_L, OUT_L_HG, OUT_L_LG,
-                                    ctx->pt_softstart_duty_curr);
-        hrtim_config_pullup_leg(ctx->ll.hrtim, TIMER_R, OUT_R_HG, OUT_R_LG);
+        hrtim_config_fixed_duty_leg<TIMER_L, OUT_L_HG, OUT_L_LG>(
+            ctx->ll.hrtim, ctx->pt_softstart_duty_curr);
+        hrtim_config_pullup_leg<TIMER_R, OUT_R_HG, OUT_R_LG>(ctx->ll.hrtim);
     }
 
     GARNET_CCMRAM_TEXT void pt_run(Ctrloop::FastRamContext *ctx)
@@ -460,11 +461,11 @@ namespace
             return;
 
         UpdateProhibitedScope scope(ctx->ll.hrtim);
-        LL_HRTIM_TIM_SetCompare3(ctx->ll.hrtim, TIMER_L, ctx->pt_softstart_duty_curr);
+        fastll::hrtim_set_compare3<TIMER_L>(ctx->ll.hrtim, ctx->pt_softstart_duty_curr);
         ctx->pt_softstart_duty_curr += 3;
 
         if (ctx->pt_softstart_duty_curr > cmpval::kMaxDuty)
-            hrtim_config_pullup_leg(ctx->ll.hrtim, TIMER_L, OUT_L_HG, OUT_L_LG);
+            hrtim_config_pullup_leg<TIMER_L, OUT_L_HG, OUT_L_LG>(ctx->ll.hrtim);
     }
 
 } // namespace anonymous
@@ -548,8 +549,8 @@ GARNET_CCMRAM_TEXT void Ctrloop::on_adc_injected_irq()
             if (req_ctrl_state == ControlState::kUnmanaged) [[unlikely]]
             {
                 UpdateProhibitedScope scope(ctx->ll.hrtim);
-                hrtim_config_highz_leg(ctx->ll.hrtim, TIMER_L, OUT_L_HG, OUT_L_LG);
-                hrtim_config_highz_leg(ctx->ll.hrtim, TIMER_R, OUT_R_HG, OUT_R_LG);
+                hrtim_config_highz_leg<TIMER_L, OUT_L_HG, OUT_L_LG>(ctx->ll.hrtim);
+                hrtim_config_highz_leg<TIMER_R, OUT_R_HG, OUT_R_LG>(ctx->ll.hrtim);
                 iir_2p2z_reset(&ctx->buck_cv_2p2z);
                 iir_2p2z_reset(&ctx->boost_cv_2p2z);
                 topo_conf_reset(ctx);
@@ -750,8 +751,8 @@ ErrStatus Ctrloop::init(const Config& config, AtomicTargetReader&& target_reader
     //   CMP1: ADC trigger
     //   CMP3: high-side delay ON (to avoid timing race condition, also provides
     //                             deadtime between low-side OFF and high-side ON)
-    LL_HRTIM_TIM_SetCompare1(ll_hrtim, LL_HRTIM_TIMER_MASTER, 2960);
-    LL_HRTIM_TIM_SetCompare3(ll_hrtim, LL_HRTIM_TIMER_MASTER, cmpval::kDeadtime1);
+    fastll::hrtim_set_compare1<LL_HRTIM_TIMER_MASTER>(ll_hrtim, 2960);
+    fastll::hrtim_set_compare3<LL_HRTIM_TIMER_MASTER>(ll_hrtim, cmpval::kDeadtime1);
 
     //   CMP1: blanking
     //   CMP2: sawtooth generation trigger
@@ -760,19 +761,19 @@ ErrStatus Ctrloop::init(const Config& config, AtomicTargetReader&& target_reader
     //         provides deadtime between high-side OFF and low-side ON
 
     // Timer B:
-    LL_HRTIM_TIM_SetCompare1(ll_hrtim, TIMER_L, cmpval::kBlanking);
-    LL_HRTIM_TIM_SetCompare2(ll_hrtim, TIMER_L, cmpval::kSawtooth);
-    LL_HRTIM_TIM_SetCompare3(ll_hrtim, TIMER_L, cmpval::kMaxDuty);
-    LL_HRTIM_TIM_SetCompare4(ll_hrtim, TIMER_L, cmpval::kDeadtime2);
+    fastll::hrtim_set_compare1<TIMER_L>(ll_hrtim, cmpval::kBlanking);
+    fastll::hrtim_set_compare2<TIMER_L>(ll_hrtim, cmpval::kSawtooth);
+    fastll::hrtim_set_compare3<TIMER_L>(ll_hrtim, cmpval::kMaxDuty);
+    fastll::hrtim_set_compare4<TIMER_L>(ll_hrtim, cmpval::kDeadtime2);
 
     // Timer D:
-    LL_HRTIM_TIM_SetCompare1(ll_hrtim, TIMER_R, cmpval::kBlanking);
-    LL_HRTIM_TIM_SetCompare3(ll_hrtim, TIMER_R, cmpval::kMaxDuty);
-    LL_HRTIM_TIM_SetCompare4(ll_hrtim, TIMER_R, cmpval::kDeadtime2);
+    fastll::hrtim_set_compare1<TIMER_R>(ll_hrtim, cmpval::kBlanking);
+    fastll::hrtim_set_compare3<TIMER_R>(ll_hrtim, cmpval::kMaxDuty);
+    fastll::hrtim_set_compare4<TIMER_R>(ll_hrtim, cmpval::kDeadtime2);
 
     fastctx->op_region = OpRegion::kIdle;
-    hrtim_config_highz_leg(ll_hrtim, TIMER_L, OUT_L_HG, OUT_L_LG);
-    hrtim_config_highz_leg(ll_hrtim, TIMER_R, OUT_R_HG, OUT_R_LG);
+    hrtim_config_highz_leg<TIMER_L, OUT_L_HG, OUT_L_LG>(ll_hrtim);
+    hrtim_config_highz_leg<TIMER_R, OUT_R_HG, OUT_R_LG>(ll_hrtim);
 
     LL_HRTIM_ForceUpdate(ll_hrtim, TIMER_L | TIMER_R | LL_HRTIM_TIMER_MASTER);
 
