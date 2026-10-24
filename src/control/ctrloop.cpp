@@ -87,6 +87,9 @@ namespace cmpval
     // counter reaches 100, 200, 300, 400, ...
     constexpr uint32_t kSawtooth = 250;
 
+    constexpr uint32_t kNeverEq = 0xffdf;
+    static_assert(kNeverEq > kTimerCounterPeriod);
+
 } // namespace cmpval
 
 constexpr uint32_t kMeasUpdatePrescaler = 200;
@@ -111,6 +114,9 @@ constexpr laplace::DiscreteComp kDefaultBoostCvCompCoeffs =
     laplace::ContinuousParams::from_freqs(3, 80, 555000)
     .solve_2p2z(kFsampleHz)
     .cast_to<float>();
+
+constexpr float kPSkipIrefThreshold = 0.5f;
+constexpr float kPSkipIrefHysteresis = 0.3f;
 
 namespace
 {
@@ -218,8 +224,11 @@ namespace
         LL_DAC_SetWaveSawtoothStepData(ctx->ll.dac_pcmc, LL_DAC_CHANNEL_1, step_val_raw);
     }
 
+    struct DemMode {};
+    struct FccmMode {};
+
     // Keep the leg identifiers constant through to fastll register selection.
-    template<uint32_t kTimer, uint32_t kOutSwitch, uint32_t kOutSyncre, bool kDem = false>
+    template<uint32_t kTimer, uint32_t kOutSwitch, uint32_t kOutSyncre, typename Mode>
     GARNET_CCMRAM_TEXT void hrtim_config_peak_curr_mode_leg(HRTIM_TypeDef *hrtim)
     {
         fastll::hrtim_set_compare3<kTimer>(hrtim, cmpval::kMaxDuty);
@@ -229,16 +238,23 @@ namespace
             hrtim, LL_HRTIM_OUTPUTRESET_TIMCMP3 | LL_HRTIM_OUTPUTRESET_EEV_4);
         fastll::hrtim_set_output_set_source<kOutSyncre>(hrtim, LL_HRTIM_OUTPUTSET_TIMCMP4);
 
-        uint32_t reset_source = LL_HRTIM_OUTPUTRESET_TIMPER;
-        if constexpr (kDem)
-            reset_source |= LL_HRTIM_OUTPUTRESET_EEV_2;
-        fastll::hrtim_set_output_reset_source<kOutSyncre>(hrtim, reset_source);
+        if constexpr (std::is_same_v<Mode, DemMode>)
+        {
+            fastll::hrtim_set_output_reset_source<kOutSyncre>(
+                hrtim, LL_HRTIM_OUTPUTRESET_TIMPER | LL_HRTIM_OUTPUTRESET_EEV_2);
+        }
+        else
+        {
+            fastll::hrtim_set_output_reset_source<kOutSyncre>(
+                hrtim, LL_HRTIM_OUTPUTRESET_TIMPER);
+        }
 
         // enable peak-current event
-        fastll::hrtim_set_capture_trigger<kTimer, LL_HRTIM_CAPTUREUNIT_2, LL_HRTIM_CAPTURETRIG_EEV_4>(hrtim);
+        fastll::hrtim_set_capture_trigger<
+            kTimer, LL_HRTIM_CAPTUREUNIT_2, LL_HRTIM_CAPTURETRIG_EEV_4>(hrtim);
     }
 
-    template<uint32_t kTimer, uint32_t kOutSwitch, uint32_t kOutSyncre>
+    template<uint32_t kTimer, uint32_t kOutSwitch, uint32_t kOutSyncre, typename Mode>
     GARNET_CCMRAM_TEXT void hrtim_config_fixed_duty_leg(HRTIM_TypeDef *hrtim, uint32_t duty_cmp_value)
     {
         if (duty_cmp_value >= kTimerCounterPeriod)
@@ -254,11 +270,21 @@ namespace
         // deadtime inserted: in auto-delay mode, this output will be set when the counter
         // reaches `CMP3 + CMP4` if capture is not triggered.
         fastll::hrtim_set_output_set_source<kOutSyncre>(hrtim, LL_HRTIM_OUTPUTSET_TIMCMP4);
-        fastll::hrtim_set_output_reset_source<kOutSyncre>(hrtim, LL_HRTIM_OUTPUTRESET_TIMPER);
+        if constexpr (std::is_same_v<Mode, DemMode>)
+        {
+            fastll::hrtim_set_output_reset_source<kOutSyncre>(
+                hrtim, LL_HRTIM_OUTPUTRESET_TIMPER | LL_HRTIM_OUTPUTRESET_EEV_2);
+        }
+        else
+        {
+            fastll::hrtim_set_output_reset_source<kOutSyncre>(
+                hrtim, LL_HRTIM_OUTPUTRESET_TIMPER);
+        }
 
         // Disable capture trigger, so that capture timeout event will be triggered and
         // `kOutSyncre` will be set when counter reaches `CMP3 + CMP4` by auto-delay mechanism.
-        fastll::hrtim_set_capture_trigger<kTimer, LL_HRTIM_CAPTUREUNIT_2, LL_HRTIM_CAPTURETRIG_NONE>(hrtim);
+        fastll::hrtim_set_capture_trigger<
+            kTimer, LL_HRTIM_CAPTUREUNIT_2, LL_HRTIM_CAPTURETRIG_NONE>(hrtim);
     }
 
     template<uint32_t kTimer, uint32_t kOutHigh, uint32_t kOutLow>
@@ -272,7 +298,8 @@ namespace
         fastll::hrtim_set_output_set_source<kOutLow>(hrtim, 0);
         fastll::hrtim_set_output_reset_source<kOutLow>(hrtim, LL_HRTIM_OUTPUTRESET_TIMPER);
 
-        fastll::hrtim_set_capture_trigger<kTimer, LL_HRTIM_CAPTUREUNIT_2, LL_HRTIM_CAPTURETRIG_NONE>(hrtim);
+        fastll::hrtim_set_capture_trigger<
+            kTimer, LL_HRTIM_CAPTUREUNIT_2, LL_HRTIM_CAPTURETRIG_NONE>(hrtim);
     }
 
     // High-side constant ON is achievable since the existence of isolated auxiliary
@@ -289,7 +316,8 @@ namespace
 
         // peak-current event should not trigger the capture unit,
         // since we're working in pass-through mode.
-        fastll::hrtim_set_capture_trigger<kTimer, LL_HRTIM_CAPTUREUNIT_2, LL_HRTIM_CAPTURETRIG_NONE>(hrtim);
+        fastll::hrtim_set_capture_trigger<
+            kTimer, LL_HRTIM_CAPTUREUNIT_2, LL_HRTIM_CAPTURETRIG_NONE>(hrtim);
     }
 
     template<uint32_t kTimer, uint32_t kOutHigh, uint32_t kOutLow>
@@ -303,11 +331,68 @@ namespace
         fastll::hrtim_set_output_set_source<kOutLow>(hrtim, LL_HRTIM_OUTPUTSET_TIMCMP4);
         fastll::hrtim_set_output_reset_source<kOutLow>(hrtim, 0);
 
-        fastll::hrtim_set_capture_trigger<kTimer, LL_HRTIM_CAPTUREUNIT_2, LL_HRTIM_CAPTURETRIG_NONE>(hrtim);
+        fastll::hrtim_set_capture_trigger<
+            kTimer, LL_HRTIM_CAPTUREUNIT_2, LL_HRTIM_CAPTURETRIG_NONE>(hrtim);
     }
 
+    INISR void topo_conf_switch_to_region(Ctrloop::FastRamContext *ctx)
+    {
+        switch (ctx->op_region)
+        {
+            case OpRegion::kBoost:
+                hrtim_config_pullup_leg<TIMER_L, OUT_L_HG, OUT_L_LG>(ctx->ll.hrtim);
+                hrtim_config_peak_curr_mode_leg<TIMER_R, OUT_R_LG, OUT_R_HG, DemMode>(ctx->ll.hrtim);
+                break;
 
-    INISR void topo_conf_adaptive_fsbb(Ctrloop::FastRamContext *ctx, float vin, float vout)
+            case OpRegion::kBoostWithBuckAux:
+                hrtim_config_fixed_duty_leg<TIMER_L, OUT_L_HG, OUT_L_LG, DemMode>(
+                    ctx->ll.hrtim, static_cast<uint32_t>(0.85f * kTimerCounterPeriod));
+                hrtim_config_peak_curr_mode_leg<TIMER_R, OUT_R_LG, OUT_R_HG, DemMode>(ctx->ll.hrtim);
+                break;
+
+            case OpRegion::kBuckWithBoostAux:
+                hrtim_config_fixed_duty_leg<TIMER_R, OUT_R_LG, OUT_R_HG, DemMode>(
+                    ctx->ll.hrtim, static_cast<uint32_t>(0.15f * kTimerCounterPeriod));
+                hrtim_config_peak_curr_mode_leg<TIMER_L, OUT_L_HG, OUT_L_LG, DemMode>(ctx->ll.hrtim);
+                break;
+
+            case OpRegion::kBuck:
+                hrtim_config_pullup_leg<TIMER_R, OUT_R_HG, OUT_R_LG>(ctx->ll.hrtim);
+                hrtim_config_peak_curr_mode_leg<TIMER_L, OUT_L_HG, OUT_L_LG, DemMode>(ctx->ll.hrtim);
+                break;
+
+            case OpRegion::kIdle:
+                // unreachable code
+                break;
+        }
+    }
+
+    INISR void topo_conf_switch_to_pskip(Ctrloop::FastRamContext *ctx)
+    {
+        switch (ctx->op_region)
+        {
+            case OpRegion::kBoost:
+                hrtim_config_pullup_leg<TIMER_L, OUT_L_HG, OUT_L_LG>(ctx->ll.hrtim);
+                hrtim_config_highz_leg<TIMER_R, OUT_R_HG, OUT_R_LG>(ctx->ll.hrtim);
+                break;
+
+            case OpRegion::kBuck:
+                hrtim_config_highz_leg<TIMER_L, OUT_L_HG, OUT_L_LG>(ctx->ll.hrtim);
+                hrtim_config_pullup_leg<TIMER_R, OUT_R_HG, OUT_R_LG>(ctx->ll.hrtim);
+                break;
+
+            case OpRegion::kBoostWithBuckAux:
+            case OpRegion::kBuckWithBoostAux:
+                hrtim_config_highz_leg<TIMER_L, OUT_L_HG, OUT_L_LG>(ctx->ll.hrtim);
+                hrtim_config_highz_leg<TIMER_R, OUT_R_HG, OUT_R_LG>(ctx->ll.hrtim);
+                break;
+
+            default:
+                break;
+        }
+    }
+
+    INISR OpRegion topo_select_op_region(OpRegion old_region, float vin, float vout)
     {
         float m = 2.0f;
         if (vout >= 1.0f)
@@ -317,8 +402,8 @@ namespace
             m = vin / vout;
         }
 
-        OpRegion next_op_region = ctx->op_region;
-        switch (ctx->op_region)
+        OpRegion next_op_region = old_region;
+        switch (old_region)
         {
             case OpRegion::kIdle:
                 if (m < 0.85f)
@@ -357,40 +442,7 @@ namespace
                 break;
         }
 
-        if (ctx->op_region != next_op_region)
-        {
-            UpdateProhibitedScope scope(ctx->ll.hrtim);
-            // Switch topology
-            ctx->op_region = next_op_region;
-            switch (next_op_region)
-            {
-                case OpRegion::kBoost:
-                    hrtim_config_pullup_leg<TIMER_L, OUT_L_HG, OUT_L_LG>(ctx->ll.hrtim);
-                    hrtim_config_peak_curr_mode_leg<TIMER_R, OUT_R_LG, OUT_R_HG>(ctx->ll.hrtim);
-                    break;
-
-                case OpRegion::kBoostWithBuckAux:
-                    hrtim_config_fixed_duty_leg<TIMER_L, OUT_L_HG, OUT_L_LG>(
-                        ctx->ll.hrtim, static_cast<uint32_t>(0.85f * kTimerCounterPeriod));
-                    hrtim_config_peak_curr_mode_leg<TIMER_R, OUT_R_LG, OUT_R_HG>(ctx->ll.hrtim);
-                    break;
-
-                case OpRegion::kBuckWithBoostAux:
-                    hrtim_config_fixed_duty_leg<TIMER_R, OUT_R_LG, OUT_R_HG>(
-                        ctx->ll.hrtim, static_cast<uint32_t>(0.15f * kTimerCounterPeriod));
-                    hrtim_config_peak_curr_mode_leg<TIMER_L, OUT_L_HG, OUT_L_LG>(ctx->ll.hrtim);
-                    break;
-
-                case OpRegion::kBuck:
-                    hrtim_config_pullup_leg<TIMER_R, OUT_R_HG, OUT_R_LG>(ctx->ll.hrtim);
-                    hrtim_config_peak_curr_mode_leg<TIMER_L, OUT_L_HG, OUT_L_LG>(ctx->ll.hrtim);
-                    break;
-
-                case OpRegion::kIdle:
-                    // unreachable code
-                    break;
-            }
-        }
+        return next_op_region;
     }
 
     INISR void topo_conf_inductor_denergize(Ctrloop::FastRamContext *ctx)
@@ -423,6 +475,73 @@ namespace
     GARNET_CCMRAM_TEXT void topo_conf_reset(Ctrloop::FastRamContext *ctx)
     {
         ctx->topo_nb_denergize_cycles = 0;
+        ctx->pskip = false;
+        ctx->op_region = OpRegion::kIdle;
+    }
+
+    INISR float regulated_run(Ctrloop::FastRamContext *ctx, float v1, float v2,
+                              float i2, float requested_vout)
+    {
+        // TODO(masshiroio): implement constant-current loop
+        const OpRegion old_region = ctx->op_region;
+        const bool old_pskip = ctx->pskip;
+
+        ctx->op_region = topo_select_op_region(old_region, v1, v2);
+
+        // Soft start & soft setpoint transient (linear ramping)
+        if (requested_vout != ctx->cv_setpoint_ramping) [[unlikely]]
+        {
+            if (requested_vout > ctx->cv_setpoint_ramping)
+            {
+                ctx->cv_setpoint_ramping = std::min(
+                    ctx->cv_setpoint_ramping + kCvRampingStep, requested_vout);
+            }
+            else
+            {
+                ctx->cv_setpoint_ramping = std::max(
+                    ctx->cv_setpoint_ramping - kCvRampingStep, requested_vout);
+            }
+        }
+
+        float iref = 0;
+        const float err = ctx->cv_setpoint_ramping - v2;
+
+        switch (ctx->op_region)
+        {
+            case OpRegion::kBuckWithBoostAux:
+            case OpRegion::kBuck:
+                iref = iir_2p2z_update(&ctx->buck_cv_2p2z, ctx->buck_cv_coeffs,
+                    err, kPSkipIrefThreshold, 30.0f);
+                update_peak_current_sawtooth(ctx, iref, v2);
+                break;
+
+            case OpRegion::kBoostWithBuckAux:
+            case OpRegion::kBoost:
+                iref = iir_2p2z_update(&ctx->boost_cv_2p2z, ctx->boost_cv_coeffs,
+                    err, kPSkipIrefThreshold, 30.0f);
+                update_peak_current_sawtooth(ctx, iref, v2 - v1);
+                break;
+
+            default:
+                break;
+        }
+
+        // PSkip mode hysteresis
+        if (iref <= kPSkipIrefThreshold)
+            ctx->pskip = true;
+        else if (iref > kPSkipIrefThreshold + kPSkipIrefHysteresis)
+            ctx->pskip = false;
+
+        if (ctx->op_region != old_region || old_pskip != ctx->pskip)
+        {
+            UpdateProhibitedScope scope(ctx->ll.hrtim);
+            if (ctx->pskip)
+                topo_conf_switch_to_pskip(ctx);
+            else
+                topo_conf_switch_to_region(ctx);
+        }
+
+        return iref;
     }
 
     // passthrough mode
@@ -450,7 +569,7 @@ namespace
 
         UpdateProhibitedScope scope(ctx->ll.hrtim);
 
-        hrtim_config_fixed_duty_leg<TIMER_L, OUT_L_HG, OUT_L_LG>(
+        hrtim_config_fixed_duty_leg<TIMER_L, OUT_L_HG, OUT_L_LG, FccmMode>(
             ctx->ll.hrtim, ctx->pt_softstart_duty_curr);
         hrtim_config_pullup_leg<TIMER_R, OUT_R_HG, OUT_R_LG>(ctx->ll.hrtim);
     }
@@ -609,38 +728,7 @@ GARNET_CCMRAM_TEXT void Ctrloop::on_adc_injected_irq()
     float iref = 0;
     if (ctx->outstate == OutputState::kRegulated)
     {
-        topo_conf_adaptive_fsbb(ctx, v1, v2);
-        // TODO(masshiroio): implement pulse-skipping/burst mode, and constant-current loop
-
-        // Soft start & soft setpoint transient (linear ramping)
-        const float cv_setpoint = requested_target.vout;
-        if (cv_setpoint != ctx->cv_setpoint_ramping) [[unlikely]]
-        {
-            if (cv_setpoint > ctx->cv_setpoint_ramping)
-            {
-                ctx->cv_setpoint_ramping = std::min(
-                    ctx->cv_setpoint_ramping + kCvRampingStep, cv_setpoint);
-            }
-            else
-            {
-                ctx->cv_setpoint_ramping = std::max(
-                    ctx->cv_setpoint_ramping - kCvRampingStep, cv_setpoint);
-            }
-        }
-
-        const float err = ctx->cv_setpoint_ramping - v2;
-        if (ctx->op_region == OpRegion::kBuck ||
-            ctx->op_region == OpRegion::kBuckWithBoostAux)
-        {
-            iref = iir_2p2z_update(&ctx->buck_cv_2p2z, ctx->buck_cv_coeffs, err, -2.0f, 30.0f);
-            update_peak_current_sawtooth(ctx, iref, v2);
-        }
-        else if (ctx->op_region == OpRegion::kBoost ||
-                 ctx->op_region == OpRegion::kBoostWithBuckAux)
-        {
-            iref = iir_2p2z_update(&ctx->boost_cv_2p2z, ctx->boost_cv_coeffs, err, -2.0f, 30.0f);
-            update_peak_current_sawtooth(ctx, iref, v2 - v1);
-        }
+        iref = regulated_run(ctx, v1, v2, i2, requested_target.vout);
     }
     else if (ctx->outstate == OutputState::kPassthrough)
     {
@@ -708,6 +796,7 @@ ErrStatus Ctrloop::init(const Config& config, AtomicTargetReader&& target_reader
     fastctx->ll.dac_pcmc = config.dac_pcmc->Instance;
 
     fastctx->ctrl_state = ControlState::kOperational;
+    fastctx->pskip = false;
 
     fastctx->cali = *config_.cali;
 
@@ -740,9 +829,15 @@ ErrStatus Ctrloop::init(const Config& config, AtomicTargetReader&& target_reader
     llhelper::adc_enable(config.ll_adc2);
 
     // Zero current detection for DEM (diode emulation mode).
-    // TODO(sora): not implemented yet. set DAC output 0 to disable this function.
+    const auto zcd_ref_raw = static_cast<int32_t>(config.cali->il_inv.map(0.1f));
+    if (zcd_ref_raw <= 0 || zcd_ref_raw >= 4096)
+    {
+        FUMI_LOGE(kTAG, "DAC raw value of ZCD threshold reference is out of range");
+        return ErrStatus::kInvalidArg;
+    }
+
     HAL_DAC_Start(config.dac_zcd, DAC_CHANNEL_1);
-    HAL_DAC_SetValue(config.dac_zcd, DAC_CHANNEL_1, DAC_ALIGN_12B_R, 2048);
+    HAL_DAC_SetValue(config.dac_zcd, DAC_CHANNEL_1, DAC_ALIGN_12B_R, zcd_ref_raw);
     HAL_COMP_Start(config.comp_zcd);
 
     HRTIM_TypeDef *ll_hrtim = config_.ll_hrtim;
@@ -753,6 +848,7 @@ ErrStatus Ctrloop::init(const Config& config, AtomicTargetReader&& target_reader
     //                             deadtime between low-side OFF and high-side ON)
     fastll::hrtim_set_compare1<LL_HRTIM_TIMER_MASTER>(ll_hrtim, 2960);
     fastll::hrtim_set_compare3<LL_HRTIM_TIMER_MASTER>(ll_hrtim, cmpval::kDeadtime1);
+    fastll::hrtim_set_compare4<LL_HRTIM_TIMER_MASTER>(ll_hrtim, cmpval::kNeverEq);
 
     //   CMP1: blanking
     //   CMP2: sawtooth generation trigger

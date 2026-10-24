@@ -8,6 +8,11 @@ struct AdcCaliCoeffs
 {
     struct PerMeasure
     {
+        [[nodiscard]] float map(float in) const
+        {
+            return in * k + b;
+        }
+
         float k;
         float b;
     };

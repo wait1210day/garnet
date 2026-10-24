@@ -19,10 +19,11 @@ The project is in active development at the early prototype stage:
 
 - [x] Buck/boost voltage regulation and operating-region transitions.
 - [x] Regulated and passthrough startup, output shutdown, and gate-driver power sequencing.
+- [x] Zero current detection and diode emulation.
+- [x] Pulse-skipping mode for light loads (experimental).
 - [x] Initial hardware overvoltage protection, serial commands, and measurement logging.
 - [x] FreeRTOS integration, CMake builds, and MPU task stack guards.
 - [ ] Constant-current regulation.
-- [ ] Pulse-skipping or burst mode for light loads.
 - [ ] ... and more
 
 ## License and acknowledgements

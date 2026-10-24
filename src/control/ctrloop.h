@@ -71,6 +71,7 @@ public:
 
         OpRegion op_region;
         OutputState outstate;
+        bool pskip;
 
         uint32_t topo_nb_denergize_cycles;
 
