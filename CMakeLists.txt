@@ -100,8 +100,7 @@ target_link_options(garnet PRIVATE
     "LINKER:-Map=$<TARGET_FILE_DIR:garnet>/garnet.map"
     LINKER:--gc-sections
     LINKER:--print-memory-usage
-
-    LINKER:-u,_printf_float
+    LINKER:--build-id=sha1
 )
 set_property(TARGET garnet APPEND PROPERTY LINK_DEPENDS "${garnet_linker_script}")
 set_property(TARGET garnet APPEND PROPERTY ADDITIONAL_CLEAN_FILES

@@ -112,6 +112,16 @@ SECTIONS
     _etext = .;        /* define a global symbols at end of code */
   } >FLASH
 
+  /**
+   * [masshiroio] keep the build-id section and make it accessible
+   * to the program itself.
+   */
+  .note.gnu.build_id : {
+    __build_id_start = .;
+    KEEP(*(.note.gnu.build-id))
+    __build_id_end = .;
+  } > FLASH
+
   /* Constant data goes into FLASH */
   .rodata :
   {

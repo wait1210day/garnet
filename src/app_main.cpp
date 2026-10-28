@@ -25,6 +25,7 @@
 #include "base/cali.h"
 #include "base/ewma_filter.h"
 #include "base/panic_init.h"
+#include "base/utils.h"
 
 #include "services/fumi.h"
 #include "services/hermes.h"
@@ -397,7 +398,14 @@ void init_and_spawn_task(void*)
     });
     GCHECK_OK(err, "failed to start fumi logger");
 
+    // Banner
     FUMI_LOGI(kTAG, "Garnet: digital GaN buck-boost power module [version 0.1]");
+    if (!check_build_id_sha1())
+        panic::panic("broken firmware build: invalid build hash section");
+    auto build_hash = get_build_id_sha1();
+    FUMI_LOGI(kTAG, "firmware build hash (sha1): %02x%02x%02x%02x%02x...",
+        build_hash[0], build_hash[1], build_hash[2], build_hash[3], build_hash[4]);
+
     FUMI_LOGI(kTAG, "freertos scheduler started, init and spawning...");
 
     // message bus, single global instance
