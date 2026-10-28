@@ -24,10 +24,18 @@ class ScopeExitGuard
 public:
     explicit ScopeExitGuard(F&& f) : func_{std::forward<F>(f)} {}
     ~ScopeExitGuard() {
+        if (!executed_)
+            func_();
+    }
+
+    void advance()
+    {
         func_();
+        executed_ = true;
     }
 
 private:
+    bool executed_{false};
     F func_;
 };
 
