@@ -427,20 +427,6 @@ void init_and_spawn_task(void*)
 
     if (auto bus = g_i2c_bus_onboard.acquire(0))
     {
-        namespace pca = pca9536;
-        i2c::Dev dev(*bus, pca::kDevAddr, XferMethod::kIRQ, pdMS_TO_TICKS(20));
-
-        const auto seq = dev.update(
-            pca::ODR::P0::assign(pca::Level::kHigh),
-            pca::ODR::P1::assign(pca::Level::kHigh)
-        ).and_then([&] {
-            return dev.write(
-                pca::CR::P0::assign(pca::Dir::kOut),
-                pca::CR::P1::assign(pca::Dir::kOut)
-            );
-        });
-        GCHECK(seq.has_value() && "failed to initialize pca9536");
-
         i2c::Dev tmp1(*bus, tmp112::addr::kVcc, XferMethod::kIRQ, pdMS_TO_TICKS(20));
         i2c::Dev tmp2(*bus, tmp112::addr::kGnd, XferMethod::kIRQ, pdMS_TO_TICKS(20));
 
