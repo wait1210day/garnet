@@ -72,7 +72,6 @@ add_executable(garnet
     src/services/janus.cpp
 
     src/control/ctrloop.cpp
-    src/control/adc_optimizer.cpp
 
     src/app_main.cpp
 )
