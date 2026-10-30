@@ -8,6 +8,7 @@
 #include "mutex"
 #include "semphr.h"
 
+#include "base/defs.h"
 #include "base/panic.h"
 #include "base/static_resource.h"
 

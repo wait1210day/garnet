@@ -28,7 +28,7 @@
 #include "control/laplace.h"
 #include "control/fast_ll.h"
 #include "control/ctrloop.h"
-#include "services/fumi.h"
+#include "services/fumi/logger.h"
 
 
 #define OUT_L_HG    LL_HRTIM_OUTPUT_TB1

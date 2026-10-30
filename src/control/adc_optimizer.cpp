@@ -6,7 +6,7 @@
 
 #include "base/priorities.h"
 #include "control/adc_optimizer.h"
-#include "services/fumi.h"
+#include "services/fumi/logger.h"
 
 static const char *kTAG = "adc_optimizer";
 

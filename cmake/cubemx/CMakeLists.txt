@@ -30,6 +30,7 @@ set(cubemx_board_sources
     Src/i2c.c
     Src/usart.c
     Src/dma.c
+    Src/crc.c
     Src/stm32g4xx_it.c
     Src/stm32g4xx_hal_msp.c
     Src/stm32g4xx_hal_timebase_tim.c
@@ -67,6 +68,7 @@ set(cubemx_driver_sources
     Drivers/STM32G4xx_HAL_Driver/Src/stm32g4xx_ll_hrtim.c
     Drivers/STM32G4xx_HAL_Driver/Src/stm32g4xx_ll_i2c.c
     Drivers/STM32G4xx_HAL_Driver/Src/stm32g4xx_ll_usart.c
+    Drivers/STM32G4xx_HAL_Driver/Src/stm32g4xx_ll_crc.c
 )
 
 # Keep parsing and diagnostics in a standalone, standard-library-only script.

@@ -19,6 +19,7 @@
 #include "usart.h"
 #include "dac.h"
 #include "dma.h"
+#include "crc.h"
 
 // app headers
 #include "base/defs.h"
@@ -27,7 +28,7 @@
 #include "base/panic_init.h"
 #include "base/utils.h"
 
-#include "services/fumi.h"
+#include "services/fumi/logger.h"
 #include "services/hermes.h"
 #include "services/hermes_messages.h"
 
@@ -37,6 +38,8 @@
 #include "drivers/i2cdev/pca9536.h"
 #include "drivers/i2cdev/tmp112.h"
 #include "drivers/uart.h"
+#include "services/fumi/logger.h"
+#include "services/fumi/cmdpipe.h"
 #include "services/janus.h"
 
 namespace
@@ -76,6 +79,9 @@ Peripherals g_periphs{};
 i2c::Bus g_i2c_bus_onboard;
 uart::Port g_uart;
 
+fumi::SharedResources g_fumi_shared;
+fumi::CmdPipe g_fumi_cmdpipe;
+
 GARNET_CCMRAM_DATA ctrl::Ctrloop::FastRamContext g_ctrl_fastram;
 ctrl::Ctrloop g_ctrl;
 Janus g_janus;
@@ -95,293 +101,6 @@ UART_IRQ_HANDLER_IMPL(DMA2_Channel3_IRQHandler, g_uart, tx_dma)
 UART_IRQ_HANDLER_IMPL(DMA2_Channel4_IRQHandler, g_uart, rx_dma)
 
 
-GARNET_NORETURN void set_param_task(void *param)
-{
-    // TODO(masshiroio): replace this temporary command parser with the console.
-
-    uint32_t value = 0;
-    uint32_t valid_count = 0;
-
-    auto rx = g_uart.rx().acquire(portMAX_DELAY);
-    GCHECK(rx.has_value());
-
-    msg::Setpoint setpoint{
-        .outstate = ctrl::OutputState::kOff,
-        .vout = 5.0f,
-        .iout = 2.0f
-    };
-
-    while (true)
-    {
-        uint8_t ch = 0;
-        const auto received = rx->read_some({&ch, 1}, portMAX_DELAY);
-        if (received.status != uart::Receiver::Status::kOk)
-        {
-            value = 0;
-            valid_count = 0;
-            FUMI_LOGE(kTAG, "UART receive error: %u",
-                      static_cast<unsigned>(received.status));
-            continue;
-        }
-
-        if (ch >= '0' && ch <= '9')
-        {
-            value = value * 10 + (ch - '0');
-            FUMI_LOGI(kTAG, "got %c, value=%lu\n", ch, value);
-            valid_count++;
-        }
-        else if (ch == 'e')
-        {
-            setpoint.outstate = ctrl::OutputState::kRegulated;
-            GCHECK_OK(hermes::get_default_bus().pub<msg::Setpoint::Topic>(setpoint),
-                      "failed to publish setpoint");
-
-            FUMI_LOGI(kTAG, "requested output state: regulated");
-        }
-        else if (ch == 'p')
-        {
-            setpoint.outstate = ctrl::OutputState::kPassthrough;
-            GCHECK_OK(hermes::get_default_bus().pub<msg::Setpoint::Topic>(setpoint),
-                      "failed to publish setpoint");
-
-            FUMI_LOGI(kTAG, "requested output state: passthrough");
-        }
-        else if (ch == 'd')
-        {
-            setpoint.outstate = ctrl::OutputState::kOff;
-            GCHECK_OK(hermes::get_default_bus().pub<msg::Setpoint::Topic>(setpoint),
-                      "failed to publish setpoint");
-            FUMI_LOGI(kTAG, "requested output state: off");
-        }
-
-        if (valid_count == 4)
-        {
-            if (value < 200 || value > 3600)
-                FUMI_LOGE(kTAG, "value is out of range, rejected");
-            else
-            {
-                float v = ((float) value) / 100.0f;
-
-                setpoint.vout = v;
-                GCHECK_OK(hermes::get_default_bus().pub<msg::Setpoint::Topic>(setpoint),
-                          "failed to publish setpoint");
-            }
-            value = 0;
-            valid_count = 0;
-        }
-    }
-}
-
-#if 0
-[[noreturn, maybe_unused]] void test_i2c()
-{
-    vTaskDelay(pdMS_TO_TICKS(300));
-
-    constexpr auto kLockTimeout = pdMS_TO_TICKS(100);
-    constexpr auto kI2cTimeout = pdMS_TO_TICKS(100);
-    constexpr auto kI2cMethod = XferMethod::kDMA;
-    bool tests_ok = true;
-
-    // Keep the self-test exclusive, including EEPROM page writes and readback.
-    // Acquire before timing; release before reporting and entering the idle loop.
-    if (auto bus = g_i2c_bus_onboard.acquire(kLockTimeout))
-    {
-        FUMI_LOGI(kTAG, "probing i2c devices...");
-        const struct
-        {
-            uint16_t address;
-            const char *name;
-        } devices[] = {
-            {0x41, "gpio expander"},
-            {0x48, "tmp112 (1)"},
-            {0x49, "tmp112 (2)"},
-            {0x50, "eeprom"},
-            {0x60, "dac"}
-        };
-        for (const auto& device : devices)
-        {
-            const auto status = bus->probe(device.address, kI2cTimeout);
-            if (status == i2c::Err::kOk)
-                FUMI_LOGI(kTAG, "detected %s at 0x%02x", device.name, device.address);
-            else
-            {
-                tests_ok = false;
-                FUMI_LOGE(kTAG, "failed to detect %s at 0x%02x: error=%u",
-                    device.name, device.address, static_cast<unsigned>(status));
-            }
-        }
-
-        i2c::Dev sensor(*bus, tmp112::addr::kVcc, kI2cMethod, kI2cTimeout);
-        const auto config = sensor.write(
-            tmp112::CR::OS::assign(0),
-            tmp112::CR::FQ::assign(tmp112::FaultQueue::k1Fault),
-            tmp112::CR::POL::assign(tmp112::AlertPolarity::kActiveLow),
-            tmp112::CR::TM::assign(tmp112::ThermostatMode::kComparator),
-            tmp112::CR::SD::assign(tmp112::ShutdownMode::kContinuous),
-            tmp112::CR::RATE::assign(tmp112::ConvRate::k4Hz),
-            tmp112::CR::EM::assign(tmp112::ExtendedMode::kNormal12Bit));
-        if (!config)
-        {
-            tests_ok = false;
-            FUMI_LOGE(kTAG, "failed to configure tmp112: error=%u",
-                static_cast<unsigned>(config.error()));
-        }
-        else
-        {
-            // Allow a fresh conversion at 4 Hz after changing the mode.
-            vTaskDelay(pdMS_TO_TICKS(300));
-            if (const auto temp = sensor.read<tmp112::TMPR>(); temp)
-            {
-                const float temperature = tmp112::raw_to_celsius_12bit(temp->raw());
-                FUMI_LOGI(kTAG, "temp %.02f C (raw=%04x mode=12bit)",
-                    temperature, static_cast<unsigned>(temp->raw()));
-            }
-            else
-            {
-                tests_ok = false;
-                FUMI_LOGE(kTAG, "failed to read temperature: error=%u",
-                    static_cast<unsigned>(temp.error()));
-            }
-        }
-
-        // Microchip 24CS256, DS20005998D sections 6.2, 6.5 and 7.3:
-        // 32 KiB array, 64-byte pages, 5 ms maximum self-timed write cycle.
-        // Writes must stay within a physical page; sequential reads can cross pages.
-        constexpr uint16_t kEepromAddress = 0x50;
-        constexpr size_t kEepromBytes = 32 * 1024;
-        constexpr size_t kEepromPageBytes = 64;
-        constexpr TickType_t kWriteReadyTimeout = pdMS_TO_TICKS(20);
-        // At 100 kHz, reading 32 KiB takes about 3 seconds on the wire.
-        constexpr TickType_t kBulkReadTimeout = pdMS_TO_TICKS(10000);
-        static_assert(kEepromBytes % kEepromPageBytes == 0);
-
-        // Static ordinary SRAM: DMA-accessible and outside the 2 KiB task stack.
-        static uint8_t eeprom_readback[kEepromBytes];
-        uint8_t page_packet[2 + kEepromPageBytes];
-        const auto pattern = [](size_t address) -> uint8_t {
-            // Mix all address bits so swapped/aliased pages do not share a pattern.
-            uint32_t value = static_cast<uint32_t>(address) + 0x9e3779b9u;
-            value = (value ^ (value >> 16)) * 0x7feb352du;
-            value = (value ^ (value >> 15)) * 0x846ca68bu;
-            return static_cast<uint8_t>(value ^ (value >> 16));
-        };
-        const auto ticks_to_ms = [](TickType_t ticks) -> unsigned long {
-            return static_cast<unsigned long>(
-                static_cast<uint64_t>(ticks) * 1000 / configTICK_RATE_HZ);
-        };
-        // An untouched DMA destination must fail verification, even on a repeat run.
-        for (size_t i = 0; i < kEepromBytes; ++i)
-            eeprom_readback[i] = static_cast<uint8_t>(~pattern(i));
-
-        FUMI_LOGI(kTAG, "eeprom DMA bulk test: 32768 bytes at 0000-7fff, 512 x 64-byte pages");
-        FUMI_LOGI(kTAG, "timing: RTOS ticks, write includes ACK polling/programming wait");
-        const TickType_t write_start = xTaskGetTickCount();
-        auto status = i2c::Err::kOk;
-        size_t written = 0;
-        for (; written < kEepromBytes; written += kEepromPageBytes)
-        {
-            // Two-byte word address, MSB first, followed by exactly one aligned page.
-            page_packet[0] = static_cast<uint8_t>(written >> 8);
-            page_packet[1] = static_cast<uint8_t>(written);
-            for (size_t i = 0; i < kEepromPageBytes; ++i)
-                page_packet[2 + i] = pattern(written + i);
-            status = bus->transmit(
-                kEepromAddress, page_packet, kI2cMethod, kI2cTimeout);
-            if (status != i2c::Err::kOk)
-                break;
-
-            // STOP starts internal programming. NACK is expected while busy;
-            // probe uses IRQ, while the actual page data uses DMA.
-            const TickType_t ready_start = xTaskGetTickCount();
-            while (true)
-            {
-                const TickType_t elapsed = xTaskGetTickCount() - ready_start;
-                if (elapsed >= kWriteReadyTimeout)
-                {
-                    status = i2c::Err::kTimeout;
-                    break;
-                }
-                status = bus->probe(kEepromAddress, kWriteReadyTimeout - elapsed);
-                if (status != i2c::Err::kNack)
-                    break;
-                vTaskDelay(1);
-            }
-            if (status != i2c::Err::kOk)
-                break;
-        }
-        const TickType_t write_ticks = xTaskGetTickCount() - write_start;
-        if (status != i2c::Err::kOk)
-        {
-            tests_ok = false;
-            FUMI_LOGE(kTAG, "eeprom bulk write FAIL: addr=%04x confirmed=%lu error=%u elapsed=%lu ms",
-                static_cast<unsigned>(written), static_cast<unsigned long>(written),
-                static_cast<unsigned>(status), ticks_to_ms(write_ticks));
-        }
-        else
-        {
-            FUMI_LOGI(kTAG, "eeprom bulk write complete: %lu bytes in %lu ms",
-                static_cast<unsigned long>(written), ticks_to_ms(write_ticks));
-
-            // One application request and repeated START; the driver reloads NBYTES
-            // for each 255-byte DMA chunk, without a STOP between chunks.
-            const uint8_t mem_addr[] = {0x00, 0x00};
-            const TickType_t read_start = xTaskGetTickCount();
-            status = bus->transmit_receive(
-                kEepromAddress, mem_addr, eeprom_readback, kI2cMethod, kBulkReadTimeout);
-            const TickType_t read_ticks = xTaskGetTickCount() - read_start;
-            if (status != i2c::Err::kOk)
-            {
-                tests_ok = false;
-                FUMI_LOGE(kTAG, "eeprom bulk read FAIL: error=%u elapsed=%lu ms",
-                    static_cast<unsigned>(status), ticks_to_ms(read_ticks));
-            }
-            else
-            {
-                const TickType_t verify_start = xTaskGetTickCount();
-                size_t mismatches = 0;
-                size_t first_mismatch = kEepromBytes;
-                for (size_t i = 0; i < kEepromBytes; ++i)
-                {
-                    if (eeprom_readback[i] != pattern(i))
-                    {
-                        if (mismatches == 0)
-                            first_mismatch = i;
-                        ++mismatches;
-                    }
-                }
-                const TickType_t verify_ticks = xTaskGetTickCount() - verify_start;
-                FUMI_LOGI(kTAG, "eeprom bulk timing: write=%lu ms read=%lu ms verify=%lu ms",
-                    ticks_to_ms(write_ticks), ticks_to_ms(read_ticks), ticks_to_ms(verify_ticks));
-                if (mismatches == 0)
-                    FUMI_LOGI(kTAG, "eeprom DMA bulk verify PASS: all 32768 bytes match");
-                else
-                {
-                    tests_ok = false;
-                    FUMI_LOGE(kTAG, "eeprom DMA bulk verify FAIL: mismatches=%lu first=%04x expected=%02x got=%02x",
-                        static_cast<unsigned long>(mismatches), static_cast<unsigned>(first_mismatch),
-                        pattern(first_mismatch), eeprom_readback[first_mismatch]);
-                }
-            }
-        }
-    }
-    else
-    {
-        tests_ok = false;
-        FUMI_LOGE(kTAG, "failed to acquire i2c bus lock");
-    }
-
-    if (tests_ok)
-        FUMI_LOGI(kTAG, "I2C self-test PASS");
-    else
-        FUMI_LOGE(kTAG, "I2C self-test FAIL");
-
-    while (1)
-    {
-        vTaskDelay(pdMS_TO_TICKS(100));
-    }
-}
-#endif
-
 void init_and_spawn_task(void*)
 {
     // System basic components
@@ -392,9 +111,14 @@ void init_and_spawn_task(void*)
     });
     GCHECK_OK(err, "failed to initialize UART port");
 
-    err = fumi::get_default_instance().init({
-        .tx = &g_uart.tx(),
-        .task_priority = PriorityTraits<Priority::kFumi>::to_freertos()
+    g_fumi_shared.init({
+        .ll_crc = CRC,
+        .uart_tx = &g_uart.tx()
+    });
+
+    err = fumi::get_default_logger().init({
+        .shared = &g_fumi_shared,
+        .task_priority = PriorityTraits<Priority::kFumiLogger>::to_freertos()
     });
     GCHECK_OK(err, "failed to start fumi logger");
 
@@ -412,14 +136,19 @@ void init_and_spawn_task(void*)
     hermes::get_default_bus().init();
     FUMI_LOGI(kTAG, "initialized hermes message bus");
 
+    g_fumi_cmdpipe.init({
+        .shared = &g_fumi_shared,
+        .uart_rx = &g_uart.rx(),
+        .task_priority = PriorityTraits<Priority::kFumiCmdPipe>::to_freertos()
+    });
+    FUMI_LOGI(kTAG, "initialized cmdpipe task for fumi protocol console");
+
     err = g_i2c_bus_onboard.init({
         .i2c = g_periphs.i2c_onboard,
         .tx_dma = { DMA2, LL_DMA_CHANNEL_1 },
         .rx_dma = { DMA2, LL_DMA_CHANNEL_2 }
     });
     GCHECK_OK(err, "failed to initialize onboard i2c peripheral driver");
-
-    // test_i2c();
 
 #if 1
     HAL_GPIO_WritePin(GDRV_PWREN_GPIO_Port, GDRV_PWREN_Pin, GPIO_PIN_SET);
@@ -479,9 +208,6 @@ void init_and_spawn_task(void*)
         // emergency case, just shutdown the power stage rudely.
         LL_GPIO_ResetOutputPin(GDRV_PWREN_GPIO_Port, GDRV_PWREN_Pin);
     }, nullptr);
-
-    xTaskCreate(set_param_task, "set_param", 256, nullptr,
-        PriorityTraits<Priority::kParamSet>::to_freertos(), nullptr);
 
     EwmaFilterF32 v1_flt(0.8);
     EwmaFilterF32 v2_flt(0.8);
@@ -564,6 +290,7 @@ int main()
     MX_I2C1_Init();
     MX_I2C2_Init();
     MX_USART2_UART_Init();
+    MX_CRC_Init();
 
     g_periphs = {
         .ll_uart = USART2,
@@ -580,6 +307,8 @@ int main()
 
     panic::init_panic_resources({
         .uart = g_periphs.ll_uart,
+        .uart_tx_dma = DMA2,
+        .uart_tx_dma_channel = LL_DMA_CHANNEL_3,
         .led_gpio = LED_G_GPIO_Port,
         .led_gpio_pin = LED_G_Pin,
         .led_active_low = true

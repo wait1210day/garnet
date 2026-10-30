@@ -113,6 +113,10 @@ struct Resources
 Resources g_res;
 char g_concat_buf[128];
 
+using namespace std::string_view_literals;
+constexpr std::string_view kPanicBegin = "\x00\r\n=== DEVICE PANIC BEGIN ===\r\n"sv;
+constexpr std::string_view kPanicEnd = "\r\n=== DEVICE PANIC END ===\r\n\x00"sv;
+
 void panic_enter_safe_state()
 {
     __disable_irq();
@@ -131,6 +135,21 @@ void panic_enter_safe_state()
         if (slot.pfn)
             slot.pfn(slot.userdata);
     }
+
+    if (g_res.ready)
+    {
+        // stop USART requesting DMA and also stop the TX channel
+        USART_TypeDef *uart = g_res.config.uart;
+        DMA_TypeDef *dma = g_res.config.uart_tx_dma;
+        uint32_t tx_channel = g_res.config.uart_tx_dma_channel;
+
+        LL_USART_DisableDMAReq_TX(uart);
+        LL_DMA_DisableIT_HT(dma, tx_channel);
+        LL_DMA_DisableIT_TC(dma, tx_channel);
+        LL_DMA_DisableIT_TE(dma, tx_channel);
+
+        panic_uart_transmit(g_res.config.uart, kPanicBegin);
+    }
 }
 
 [[noreturn]] void panic_enter_final_state()
@@ -138,6 +157,8 @@ void panic_enter_safe_state()
     if (g_res.ready)
     {
         panic_uart_transmit(g_res.config.uart, "panic: system will reset...\r\n");
+        panic_uart_transmit(g_res.config.uart, kPanicEnd);
+
         panic_blink_led(g_res.config);
 
         panic_try_raise_breakpoint();

@@ -14,8 +14,8 @@ enum class Priority : uint16_t
 {
     kIdle = 0,
 
-    kFumi = 5,
-    kParamSet = 5,
+    kFumiLogger = 5,
+    kFumiCmdPipe = 5,
 
     kAdcOptimizer = 10,
     kJanus = 15,

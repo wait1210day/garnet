@@ -67,7 +67,10 @@ add_executable(garnet
     src/drivers/i2c_bus.cpp
     src/drivers/uart.cpp
 
-    src/services/fumi.cpp
+    src/services/fumi/wirecodec.cpp
+    src/services/fumi/shared.cpp
+    src/services/fumi/logger.cpp
+    src/services/fumi/cmdpipe.cpp
     src/services/hermes.cpp
     src/services/janus.cpp
 

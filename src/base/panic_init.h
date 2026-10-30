@@ -9,6 +9,7 @@
 
 #include "stm32g4xx_ll_usart.h"
 #include "stm32g4xx_ll_gpio.h"
+#include "stm32g4xx_ll_dma.h"
 
 #include "base/panic.h"
 
@@ -18,6 +19,8 @@ namespace panic
 struct Config
 {
     USART_TypeDef   *uart;
+    DMA_TypeDef     *uart_tx_dma;
+    uint32_t         uart_tx_dma_channel;
     GPIO_TypeDef    *led_gpio;
     uint32_t         led_gpio_pin;
     bool             led_active_low;

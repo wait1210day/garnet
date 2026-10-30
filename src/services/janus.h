@@ -35,7 +35,7 @@ public:
     ErrStatus init(const Config& config);
 
 private:
-    static coro::PollAsync task_sequence(coro::FrameStore, Janus *self);
+    static coro::PollAsync power_sequence(coro::FrameStore, Janus *self);
 
     [[noreturn]] void task_routine();
 

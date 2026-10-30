@@ -11,7 +11,7 @@
 #include "drivers/i2c_device.h"
 #include "drivers/i2cdev/pca9536.h"
 #include "drivers/i2cdev/mcp4728.h"
-#include "services/fumi.h"
+#include "services/fumi/logger.h"
 #include "services/hermes_messages.h"
 #include "services/janus.h"
 
@@ -322,7 +322,7 @@ ctrl::TargetSet eval_output_soa_protect(const msg::Setpoint& desired)
 
 } // namespace anonymous
 
-coro::PollAsync Janus::task_sequence(coro::FrameStore, Janus *self)
+coro::PollAsync Janus::power_sequence(coro::FrameStore, Janus *self)
 {
     GCHECK_OK(hermes::get_default_bus().sub_overwrite(self->q_setpoint_),
               "failed to subscribe event on hermes bus");
@@ -467,7 +467,8 @@ coro::PollAsync Janus::task_sequence(coro::FrameStore, Janus *self)
 {
     FUMI_LOGI(kTAG, "janus task has been started");
 
-    const coro::PollAsync task = task_sequence(coro_frame_buf_.as_store(), this);
+    coro::PollAsync power_seq_async =
+        power_sequence(coro_frame_buf_.as_store(), this);
 
     TickType_t last_wake_tick = xTaskGetTickCount();
     while (true)
@@ -477,8 +478,7 @@ coro::PollAsync Janus::task_sequence(coro::FrameStore, Janus *self)
 
         // TODO(masshiroio): get sensor measurements and compute SOA, applying them
         //                   to the SOA eval function.
-
-        task.poll(xTaskGetTickCount());
+        power_seq_async.poll(xTaskGetTickCount());
 
         vTaskDelayUntil(&last_wake_tick, pdMS_TO_TICKS(5));
     }
