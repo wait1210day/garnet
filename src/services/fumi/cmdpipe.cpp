@@ -12,7 +12,7 @@ namespace fumi
 
 namespace
 {
-    constexpr const char *kTAG = "cmdpipe";
+    constexpr auto kTAG = FUMI_LITERAL_STR("cmdpipe");
     using RespFlag = proto::ResponseFlag;
 } // namespace anonymous
 
@@ -73,33 +73,52 @@ void CmdPipe::handle_frame(std::span<uint8_t> frame)
             .nb_operands = nb_operands
         };
 
-        // Protocol defined commands:
-        if (opcode == proto::CmdOpcode::kHostHello)
-            handle_cmd_host_hello(info);
-        else
+        // Protocol defined commands
+        switch (opcode)
         {
-            send_resp_err(
-                info.transaction_id, RespFlag::kErrInvalidOpcode, 0, "invalid opcode");
+            case proto::CmdOpcode::kHostHello:
+                handle_cmd_host_hello(info);
+                break;
+
+            case proto::CmdOpcode::kSetLevel:
+                handle_cmd_set_level(info);
+                break;
+
+            case proto::CmdOpcode::kGetStats:
+                handle_cmd_get_stats(info);
+                break;
+
+            case proto::CmdOpcode::kPing:
+                handle_cmd_ping(info);
+                break;
+
+            default:
+                FUMI_LOGW(kTAG, "unrecognized opcode 0x%02x", static_cast<uint8_t>(opcode));
+                send_resp_err(info.transaction_id, 0, proto::ErrCode::kInvalidOpcode);
+                break;
         }
     }
 }
 
-void CmdPipe::handle_cmd_host_hello(const CmdParseInfo& info)
-{
-    // Reject ill-formed packets
-    if (info.reader.remaining_bytes() > 0)
-    {
-        send_resp_err(
-            info.transaction_id, RespFlag::kErrIllFormedPacket, 0, "ill-formed packet");
-        return;
+#define READER_ZERO_REMAIN_CHECK(info)              \
+    if ((info).reader.remaining_bytes() > 0) {      \
+        send_resp_err((info).transaction_id, 0,     \
+            proto::ErrCode::kIllFormedPacket);      \
+        return;                                     \
     }
 
-    if (info.nb_operands != 0)
-    {
-        send_resp_err(info.transaction_id, RespFlag::kErrInvalidOperands, 0,
-            "HostHello command expects 0 operand");
-        return;
+#define RESP_INVALID_OPERAND_IF(info, cond)         \
+    if (cond) {                                     \
+        send_resp_err((info).transaction_id, 0,     \
+            proto::ErrCode::kInvalidOperands);      \
+        return;                                     \
     }
+
+
+void CmdPipe::handle_cmd_host_hello(const CmdParseInfo& info)
+{
+    RESP_INVALID_OPERAND_IF(info, info.nb_operands != 0)
+    READER_ZERO_REMAIN_CHECK(info)
 
     auto build_hash = get_build_id_sha1();
     GCHECK(build_hash.size_bytes() == 20);
@@ -108,12 +127,70 @@ void CmdPipe::handle_cmd_host_hello(const CmdParseInfo& info)
         info.transaction_id, 0,
         Flags{proto::ResponseFlag::kDone},
         [&](proto::PacketWriter& w) {
-            w.write_sstr("Garnet");
-            w.write_sstr("GaN buck-boost DC/DC converter");
+            w.write_istr("Garnet");
+            w.write_istr("GaN buck-boost DC/DC converter");
             return w.write_ibytes(build_hash);
         }
     );
 }
+
+void CmdPipe::handle_cmd_set_level(const CmdParseInfo& info)
+{
+    RESP_INVALID_OPERAND_IF(info, info.nb_operands != 1)
+
+    auto level = info.reader.read_tagged_primitive<uint8_t>();
+    READER_ZERO_REMAIN_CHECK(info)
+    RESP_INVALID_OPERAND_IF(info, info.reader.has_error())
+
+    RESP_INVALID_OPERAND_IF(info,
+        level != static_cast<uint8_t>(proto::LogLevel::kDebug) &&
+        level != static_cast<uint8_t>(proto::LogLevel::kInfo) &&
+        level != static_cast<uint8_t>(proto::LogLevel::kWarn) &&
+        level != static_cast<uint8_t>(proto::LogLevel::kError) &&
+        level != static_cast<uint8_t>(proto::LogLevel::kSilent))
+
+    FUMI_LOGI(kTAG, "log level will be set to 0x%02x", static_cast<uint8_t>(level));
+    get_default_logger().set_level(static_cast<proto::LogLevel>(level));
+
+    send_resp(info.transaction_id, 0, Flags{proto::ResponseFlag::kDone},
+        [&](proto::PacketWriter& w) { return true; });
+}
+
+void CmdPipe::handle_cmd_get_stats(const CmdParseInfo& info)
+{
+    RESP_INVALID_OPERAND_IF(info, info.nb_operands != 0)
+    READER_ZERO_REMAIN_CHECK(info)
+
+    Stats stats{};
+    get_default_logger().get_stats_approx(stats);
+
+    send_resp(
+        info.transaction_id, 0, Flags{proto::ResponseFlag::kDone},
+        [&](proto::PacketWriter& w) {
+            w.write_numeric<uint32_t>(stats.sent);
+            w.write_numeric<uint32_t>(stats.uart_tx_error);
+            w.write_numeric<uint32_t>(stats.encode_error);
+            w.write_numeric<uint32_t>(stats.resource_unavail_error);
+            w.write_numeric<uint32_t>(stats.drop_no_free_slot);
+            w.write_numeric<uint32_t>(stats.drop_in_isr);
+            return w.write_numeric<uint32_t>(stats.drop_unknown);
+        }
+    );
+}
+
+void CmdPipe::handle_cmd_ping(const CmdParseInfo& info)
+{
+    RESP_INVALID_OPERAND_IF(info, info.nb_operands != 0)
+    READER_ZERO_REMAIN_CHECK(info)
+
+    send_resp(
+        info.transaction_id, 0, Flags{proto::ResponseFlag::kDone},
+        [](proto::PacketWriter& w) {
+            return w.write_istr("PONG!");
+        }
+    );
+}
+
 
 [[noreturn]] void CmdPipe::task_routine()
 {

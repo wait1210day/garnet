@@ -44,7 +44,8 @@
 
 namespace
 {
-constexpr const char *kTAG = "app_main";
+
+constexpr auto kTAG = FUMI_LITERAL_STR("app_main");
 
 const AdcCaliCoeffs g_cali = {
     .v1 = {0.009759f, 0.045531f},
@@ -250,12 +251,13 @@ void init_and_spawn_task(void*)
             {
                 eff = i2 * v2 / (i1 * v1);
             }
-            
-            auto stack_high_mark = uxTaskGetStackHighWaterMark(nullptr);
-            FUMI_LOGI(kTAG, "%.02fV;%.02fA %.02fV;%.02fA eff=%.03f iref=%.02f temp=%.02f,%.02f [st %lu words]",
-                v1, i1, v2, i2, eff, meas.iref, temp1, temp2, stack_high_mark);
-            FUMI_LOGI(kTAG, "ctrl=%s",
-                meas.ctrl_state == ctrl::ControlState::kUnmanaged ? "unmanaged" : "operational");
+
+            auto ctrl_state_str =
+                meas.ctrl_state == ctrl::ControlState::kUnmanaged ?
+                FUMI_LITERAL_STR("unmanaged") : FUMI_LITERAL_STR("operational");
+
+            FUMI_LOGI(kTAG, "%s, %.02fV;%.02fA %.02fV;%.02fA eff=%.03f iref=%.02f temp=%.02f,%.02f",
+                ctrl_state_str, v1, i1, v2, i2, eff, meas.iref, temp1, temp2);
 
             prescaler = 0;
         }

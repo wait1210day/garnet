@@ -5,14 +5,12 @@
 #define GARNET_FUMI_H
 
 #include <cstdio>
-#include <cstdarg>
 #include <atomic>
-
-#include "stm32g4xx_hal.h"
 
 #include "FreeRTOS.h"
 #include "queue.h"
 
+#include "base/defs.h"
 #include "base/err.h"
 #include "base/static_resource.h"
 #include "base/static_queue.h"
@@ -20,6 +18,7 @@
 #include "services/fumi/wirecodec.h"
 #include "services/fumi/protocol.h"
 #include "services/fumi/shared.h"
+#include "services/fumi/hash.h"
 
 namespace fumi
 {
@@ -49,13 +48,14 @@ struct Message
     proto::LogLevel level;
     // TODO(masshiroio): switch to 64bit monotonic timestamp
     uint32_t timestamp;
-    const char *tag;
-    const char *fmt;
+    LiteralStrId tag;
+    LiteralStrId fmt;
     std::size_t nb_args;
     std::size_t argsbuf_len;
     uint8_t argsbuf[kArgsCapacity];
 };
 
+LiteralStrId strerr(ErrStatus err);
 
 class Logger
 {
@@ -81,9 +81,11 @@ public:
     // NEVER pass non-static %s strings.
     // A pointer with %p is always safe since the pointer will not be dereferenced.
     template<typename...Args>
-    void log(proto::LogLevel level, const char *tag, const char *fmt, Args&&...args)
+    void log(proto::LogLevel level, LiteralStrId tag, LiteralStrId fmt, Args&&...args)
     {
         if (!ready_ || level < level_.load(std::memory_order_relaxed))
+            return;
+        if (level == proto::LogLevel::kSilent)
             return;
 
         int32_t slot_idx = try_get_free_slot_index();
@@ -140,45 +142,59 @@ private:
 
 Logger& get_default_logger();
 
+namespace detail
+{
+
+    template<class T>
+    constexpr T as_printf_check_arg(T value)
+    {
+        return value;
+    }
+
+    constexpr const char *as_printf_check_arg(LiteralStrId)
+    {
+        return "";
+    }
+
+} // namespace fumi::detail
+
 } // namespace fumi
 
-#if FUMI_LEVEL_DEBUG >= FUMI_COMPILE_LEVEL
-#define FUMI_LOGD(tag, fmt, ...) \
-    do { \
-        if (false) { printf(fmt, ##__VA_ARGS__); } \
-        fumi::get_default_logger().log(fumi::proto::LogLevel::kDebug, tag, fmt, ##__VA_ARGS__); \
+#define FUMI_DETAIL_PRINTF_CHECK_ARG(arg) \
+    , ::fumi::detail::as_printf_check_arg((arg))
+
+#define FUMI_LOGx(tag_id, fmt, level, ...)                                      \
+    do {                                                                        \
+        if (false)                                                              \
+        {                                                                       \
+            std::printf(fmt GARNET_PP_FOR_EACH(                                 \
+                FUMI_DETAIL_PRINTF_CHECK_ARG, __VA_ARGS__));                    \
+        }                                                                       \
+        constexpr auto fmt_id = FUMI_LITERAL_STR(fmt);                          \
+        fumi::get_default_logger().log(level, tag_id, fmt_id, ##__VA_ARGS__);   \
     } while (0)
+
+
+#if FUMI_LEVEL_DEBUG >= FUMI_COMPILE_LEVEL
+#define FUMI_LOGD(tag, fmt, ...) FUMI_LOGx(tag, fmt, fumi::proto::LogLevel::kDebug, ##__VA_ARGS__)
 #else
 #define FUMI_LOGD(tag, fmt, ...) ((void)0)
 #endif // FUMI_LEVEL_DEBUG
 
 #if FUMI_LEVEL_INFO >= FUMI_COMPILE_LEVEL
-#define FUMI_LOGI(tag, fmt, ...) \
-    do { \
-        if (false) { printf(fmt, ##__VA_ARGS__); } \
-        fumi::get_default_logger().log(fumi::proto::LogLevel::kInfo, tag, fmt, ##__VA_ARGS__); \
-    } while (0)
+#define FUMI_LOGI(tag, fmt, ...) FUMI_LOGx(tag, fmt, fumi::proto::LogLevel::kInfo, ##__VA_ARGS__)
 #else
 #define FUMI_LOGI(tag, fmt, ...) ((void)0)
 #endif // FUMI_LEVEL_INFO
 
 #if FUMI_LEVEL_WARN >= FUMI_COMPILE_LEVEL
-#define FUMI_LOGW(tag, fmt, ...) \
-    do { \
-        if (false) { printf(fmt, ##__VA_ARGS__); } \
-        fumi::get_default_logger().log(fumi::proto::LogLevel::kWarn, tag, fmt, ##__VA_ARGS__); \
-    } while (0)
+#define FUMI_LOGW(tag, fmt, ...) FUMI_LOGx(tag, fmt, fumi::proto::LogLevel::kWarn, ##__VA_ARGS__)
 #else
 #define FUMI_LOGW(tag, fmt, ...) ((void)0)
 #endif // FUMI_LEVEL_WARN
 
 #if FUMI_LEVEL_ERROR >= FUMI_COMPILE_LEVEL
-#define FUMI_LOGE(tag, fmt, ...) \
-    do { \
-        if (false) { printf(fmt, ##__VA_ARGS__); } \
-        fumi::get_default_logger().log(fumi::proto::LogLevel::kError, tag, fmt, ##__VA_ARGS__); \
-    } while (0)
-
+#define FUMI_LOGE(tag, fmt, ...) FUMI_LOGx(tag, fmt, fumi::proto::LogLevel::kError, ##__VA_ARGS__)
 #else
 #define FUMI_LOGE(tag, fmt, ...) ((void)0)
 #endif // FUMI_LEVEL_ERROR

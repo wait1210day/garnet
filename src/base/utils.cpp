@@ -8,20 +8,11 @@ const char *get_error_str(ErrStatus err)
 {
     switch (err)
     {
-        case ErrStatus::kOk:
-            return "success";
-        case ErrStatus::kInvalidArg:
-            return "invalid argument";
-        case ErrStatus::kUnsupported:
-            return "unsupported operation";
-        case ErrStatus::kTimeout:
-            return "timed out";
-        case ErrStatus::kNoMem:
-            return "memory allocation failed";
-        case ErrStatus::kFail:
-            return "generic error";
+#define CASE(e, s) case e: return s;
+        GARNET_ERR_STATUS_STR_LIST(CASE)
         default:
             return "unknown error";
+#undef CASE
     }
 }
 

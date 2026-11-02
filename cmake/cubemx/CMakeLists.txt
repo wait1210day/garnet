@@ -72,7 +72,6 @@ set(cubemx_driver_sources
 )
 
 # Keep parsing and diagnostics in a standalone, standard-library-only script.
-find_package(Python3 3.10 REQUIRED COMPONENTS Interpreter)
 set(cubemx_checker "${CMAKE_CURRENT_LIST_DIR}/../../tools/check_cubemx_manifest.py")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${cubemx_root}/cmake/stm32cubemx/CMakeLists.txt"

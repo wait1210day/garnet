@@ -19,7 +19,7 @@
 
 namespace
 {
-constexpr const char *kTAG = "janus";
+constexpr auto kTAG = FUMI_LITERAL_STR("janus");
 
 using PcaCrPortHighBiasEn1 = pca9536::CR::P2;
 using PcaCrPortHighBiasEn2 = pca9536::CR::P3;
@@ -92,7 +92,7 @@ std::expected<mcp4728::DeviceStatus, i2c::Err>
         if (!status)
         {
             FUMI_LOGE(kTAG, "mcp4728: failed to retrieve device status: %s",
-                i2c::get_err_str(status.error()));
+                fumi::strerr(status.error()));
             return status;
         }
         // POR=1 means normal state.
@@ -122,7 +122,7 @@ std::expected<mcp4728::DeviceStatus, i2c::Err>
         if (!status)
         {
             FUMI_LOGE(kTAG, "mcp4728: failed to retrieve device status: %s",
-                i2c::get_err_str(status.error()));
+                fumi::strerr(status.error()));
             return status;
         }
 
@@ -162,7 +162,7 @@ ErrStatus init_mcp4728_dac(i2c::Bus *bus)
         FUMI_LOGI(kTAG, "mcp4728: probing device in i2c bus...");
         if (auto err = scoped->probe(kDefaultAddr, pdMS_TO_TICKS(5)); err != i2c::Err::kOk)
         {
-            FUMI_LOGE(kTAG, "mcp4728: failed to probe device: %s", i2c::get_err_str(err));
+            FUMI_LOGE(kTAG, "mcp4728: failed to probe device: %s", fumi::strerr(err));
             return ErrStatus::kFail;
         }
         FUMI_LOGI(kTAG, "mcp4728: device probed");
@@ -207,7 +207,7 @@ ErrStatus init_mcp4728_dac(i2c::Bus *bus)
         if (!seq_wr_result)
         {
             FUMI_LOGE(kTAG, "mcp4728: failed to write parameters: %s",
-                i2c::get_err_str(seq_wr_result.error()));
+                fumi::strerr(seq_wr_result.error()));
         }
 
         status = mcp4728_wait_eeprom_ready(dev);
@@ -273,7 +273,7 @@ ErrStatus Janus::init(const Config& config)
         if (!seq.has_value())
         {
             FUMI_LOGE(kTAG, "failed to config pca9536 on i2c: %s",
-                      i2c::get_err_str(seq.error()));
+                      fumi::strerr(seq.error()));
             return ErrStatus::kFail;
         }
     }
@@ -292,7 +292,7 @@ ErrStatus Janus::init(const Config& config)
     err = ctrl_->init(config.ctrl_config, std::move(reader));
     if (err != ErrStatus::kOk)
     {
-        FUMI_LOGE(kTAG, "failed to initialize control: %s", get_error_str(err));
+        FUMI_LOGE(kTAG, "failed to initialize control: %s", fumi::strerr(err));
         return err;
     }
     FUMI_LOGI(kTAG, "initialized control");

@@ -22,24 +22,7 @@
 namespace i2c
 {
 
-enum class Err : uint8_t
-{
-    kOk = 0,
-    kInvalidArg,
-    kNotInitialized,
-    kInvalidContext,
-    kDmaNotConfigured,
-    kBusy,
-    kTimeout,
-    kNack,
-    kBus,
-    kArbitrationLost,
-    kOverrun,
-    kDma,
-    kUnexpectedStop,
-};
-
-const char *get_err_str(Err e);
+using Err = ErrStatus;
 
 // Synchronous, master-only, 7-bit I2C bus. No heap allocation or HAL calls.
 // One owner per peripheral; do not mix HAL transfers with this driver.

@@ -103,7 +103,7 @@ constexpr float kFsampleHz = 250'000;
 
 #define INISR GARNET_ALWAYS_INLINE inline
 
-constexpr const char *kTAG = "ctrloop";
+constexpr auto kTAG = FUMI_LITERAL_STR("ctrloop");
 
 constexpr laplace::DiscreteComp kDefaultBuckCvCompCoeffs =
     laplace::ContinuousParams::from_freqs(5, 80, 726000)
@@ -814,14 +814,14 @@ ErrStatus Ctrloop::init(const Config& config, AtomicTargetReader&& target_reader
     ErrStatus err = llhelper::adc_start_calibration(config.ll_adc1, LL_ADC_SINGLE_ENDED);
     if (err != ErrStatus::kOk)
     {
-        FUMI_LOGE(kTAG, "failed to calibrate ADC1: %s", get_error_str(err));
+        FUMI_LOGE(kTAG, "failed to calibrate ADC1: %s", fumi::strerr(err));
         return err;
     }
 
     err = llhelper::adc_start_calibration(config.ll_adc2, LL_ADC_SINGLE_ENDED);
     if (err != ErrStatus::kOk)
     {
-        FUMI_LOGE(kTAG, "failed to calibrate ADC2: %s", get_error_str(err));
+        FUMI_LOGE(kTAG, "failed to calibrate ADC2: %s", fumi::strerr(err));
         return err;
     }
 

@@ -16,6 +16,10 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Debug CACHE STRING "Build configuration" FORCE)
 endif()
 
+set(Python3_FIND_VIRTUALENV ONLY)
+set(Python3_ROOT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/tools/.venv")
+find_package(Python3 3.10 REQUIRED COMPONENTS Interpreter)
+
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -110,6 +114,19 @@ set_property(TARGET garnet APPEND PROPERTY ADDITIONAL_CLEAN_FILES
 
 # Keep the CubeMX compatibility workaround for toolchains that infer libob.
 list(REMOVE_ITEM CMAKE_C_IMPLICIT_LINK_LIBRARIES ob)
+
+add_custom_command(
+    TARGET garnet POST_BUILD
+
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/gen_fumicon_json.py"
+        "$<TARGET_FILE:garnet>" "${CMAKE_CURRENT_BINARY_DIR}/fumicon.json"
+
+    BYPRODUCTS
+        ${CMAKE_CURRENT_BINARY_DIR}/fumicon.json
+
+    COMMENT "Generating fumicon firmware metadata fumicon.json..."
+    VERBATIM
+)
 
 option(GARNET_ENABLE_FLASH "Provide the OpenOCD flash target" ON)
 if(GARNET_ENABLE_FLASH)

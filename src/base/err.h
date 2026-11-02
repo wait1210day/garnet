@@ -14,7 +14,36 @@ enum class ErrStatus
     kUnsupported,
     kNoMem,
     kTimeout,
+
+    kNotInitialized,
+    kInvalidContext,
+    kBusy,
+
+    kDma,
+    kOverrun,
+
+    kI2cNack,
+    kI2cBus,
+    kI2cArbitrationLost,
+    kI2cUnexpectedStop
 };
+
+#define GARNET_ERR_STATUS_STR_LIST(V) \
+    V(ErrStatus::kOk, "success") \
+    V(ErrStatus::kFail, "generic error") \
+    V(ErrStatus::kInvalidArg, "invalid argument") \
+    V(ErrStatus::kUnsupported, "unsupported operation") \
+    V(ErrStatus::kNoMem, "out of memory") \
+    V(ErrStatus::kTimeout, "timeout") \
+    V(ErrStatus::kNotInitialized, "not initialized") \
+    V(ErrStatus::kInvalidContext, "invalid context") \
+    V(ErrStatus::kBusy, "device or resource busy") \
+    V(ErrStatus::kDma, "dma transfer error") \
+    V(ErrStatus::kOverrun, "buffer overrun error") \
+    V(ErrStatus::kI2cNack, "i2c device responds NACK") \
+    V(ErrStatus::kI2cBus, "i2c bus error") \
+    V(ErrStatus::kI2cArbitrationLost, "i2c arbitration lost") \
+    V(ErrStatus::kI2cUnexpectedStop, "i2c unexpected stop")
 
 const char *get_error_str(ErrStatus err);
 

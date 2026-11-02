@@ -70,8 +70,7 @@ enum class DataTypeTag : uint8_t
     // float, double
     kFloat = 0x09,
     kDouble = 0x0a,
-    // sstr, a pointer to an address of flash, and the host can locate and extract
-    // the actual string using this address from the firmware ELF file.
+    // sstr, a hash value of a string literal
     kStaticString = 0x0b,
     // numeric raw pointer, will not be dereferenced or resolved further
     kRawPointer = 0x0c,
@@ -85,6 +84,11 @@ enum class DataTypeTag : uint8_t
 
     // ibytes, like istr, but represents raw bytes
     kImmBytes = 0x21
+};
+
+struct LiteralStrId
+{
+    uint32_t hash;
 };
 
 template<typename T>
@@ -122,7 +126,7 @@ constexpr DataTypeTag get_prim_type_tag()
         return DataTypeTag::kFloat;
     else if constexpr (std::is_same_v<T, double>)
         return DataTypeTag::kDouble;
-    else if constexpr (std::is_same_v<T, const char*>)
+    else if constexpr (std::is_same_v<T, LiteralStrId>)
         return DataTypeTag::kStaticString;
     else if constexpr (std::is_same_v<T, void*>)
         return DataTypeTag::kRawPointer;
@@ -189,11 +193,16 @@ enum class LogLevel : uint8_t
 #define FUMI_LEVEL_INFO     0x01
 #define FUMI_LEVEL_WARN     0x02
 #define FUMI_LEVEL_ERROR    0x03
+#define FUMI_LEVEL_SILENT   0xff
 
     kDebug = FUMI_LEVEL_DEBUG,
     kInfo = FUMI_LEVEL_INFO,
     kWarn = FUMI_LEVEL_WARN,
-    kError = FUMI_LEVEL_ERROR
+    kError = FUMI_LEVEL_ERROR,
+
+    // A special level that suppresses all the logs.
+    // Host will NOT receive this level in binary log stream.
+    kSilent = FUMI_LEVEL_SILENT
 };
 
 [[gnu::always_inline]] inline std::size_t log_payload_size(std::size_t argsbuf_len)
@@ -216,8 +225,26 @@ enum class CmdOpcode : uint8_t
     // Query for the basic info of device and fumi protocol.
     // Operands: 0
     // Response payload:
-    //   [device_name:sstr] [device_desc:sstr] [build_id_sha1:ibytes]
+    //   [device_name:istr] [device_desc:istr] [build_id_sha1:ibytes]
     kHostHello = 0x01,
+
+    // Set current log level.
+    // Operands: 1, [level:u8] (0=debug, 1=info, 2=warn, 3=error, 0xff=silent)
+    // Response payload: empty
+    kSetLevel = 0x02,
+
+    // Get fumi logger statistics.
+    // Operands: 0
+    // Response payload:
+    //   [sent:u32] [uart_tx_err:u32] [enc_err:u32] [res_unavail:u32]
+    //   [drop_slot:u32] [drop_isr:u32] [drop_unk:u32]
+    kGetStats = 0x04,
+
+    // Ping the device. Round-trip time could be measured by the host.
+    // Operands: 0
+    // Response payload:
+    //   [text:istr] (fixed, = "PONG!")
+    kPing = 0x05,
 };
 
 // Response channel payload format:
@@ -226,12 +253,18 @@ enum class ResponseFlag : uint8_t
 {
     kDone = (1 << 0),
 
-    // If err flags are set, a `sstr` in response_payload describes
-    // the detailed information of the error.
-    kErrIllFormedPacket = (1 << 1),
-    kErrInvalidOpcode = (1 << 2),
-    kErrInvalidOperands = (1 << 3),
-    kErrExecution = (1 << 4)
+    // If err flags are set, response payload is `ErrorResponsePayload`.
+    kErr = (1 << 1)
+};
+
+// ErrorResponsePayload format:
+//   [err_code:u8]
+enum class ErrCode : uint8_t
+{
+    kIllFormedPacket = 0x00,
+    kInvalidOpcode = 0x01,
+    kInvalidOperands = 0x02,
+    kExecution = 0x03
 };
 
 struct Consume {};
@@ -283,6 +316,36 @@ public:
         using U = typename std::underlying_type_t<T>;
         CHECK_SIZE_ERROR(sizeof(T), static_cast<T>(0))
         return static_cast<T>(read_numeric<U, Method>());
+    }
+
+    template<typename T>
+    T read_tagged_primitive()
+    {
+        static_assert(is_primitive_type<T>(),
+            "T must be a protocol primitive type");
+
+        constexpr DataTypeTag kTag = get_prim_type_tag<T>();
+        // Device do NOT receive these types.
+        static_assert(kTag != DataTypeTag::kRawPointer &&
+                      kTag != DataTypeTag::kStaticString);
+
+        CHECK_SIZE_ERROR(1 + sizeof(T), static_cast<T>(0));
+
+        DataTypeTag tag;
+        std::memcpy(&tag, buf_.data() + pos_, 1);
+        pos_ += 1;
+
+        if (tag != kTag)
+        {
+            has_error_ = true;
+            return static_cast<T>(0);
+        }
+
+        T value;
+        std::memcpy(&value, buf_.data() + pos_, sizeof(T));
+        pos_ += sizeof(T);
+
+        return value;
     }
 
     // ...
@@ -362,11 +425,10 @@ public:
         return write_numeric<U>(static_cast<U>(value));
     }
 
-    bool write_sstr(const char *ptr)
+    bool write_sstr(LiteralStrId id)
     {
-        static_assert(sizeof(const char*) == sizeof(uint32_t));
-        CHECK_SIZE_ERROR(sizeof(uint32_t), false)
-        return write_numeric(reinterpret_cast<uintptr_t>(ptr));
+        CHECK_SIZE_ERROR(sizeof(LiteralStrId::hash), false)
+        return write_numeric(id.hash);
     }
 
     bool write_bytes(std::span<const uint8_t> bytes)

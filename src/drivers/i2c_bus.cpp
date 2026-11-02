@@ -45,40 +45,6 @@ void flush_tx(I2C_TypeDef *i2c)
 
 } // namespace anonymous
 
-const char *get_err_str(Err e)
-{
-    switch (e)
-    {
-        case Err::kOk:
-            return "ok";
-        case Err::kInvalidArg:
-            return "invalid argument";
-        case Err::kNotInitialized:
-            return "not initialized";
-        case Err::kInvalidContext:
-            return "invalid context";
-        case Err::kDmaNotConfigured:
-            return "dma not configured";
-        case Err::kBusy:
-            return "bus is busy";
-        case Err::kTimeout:
-            return "timed out";
-        case Err::kNack:
-            return "device responded nack";
-        case Err::kBus:
-            return "bus error";
-        case Err::kArbitrationLost:
-            return "arbitration lost";
-        case Err::kOverrun:
-            return "overrun";
-        case Err::kDma:
-            return "dma error";
-        case Err::kUnexpectedStop:
-            return "unexpected stop";
-    }
-    return "unknown error";
-}
-
 ErrStatus Bus::init(const Config& config)
 {
     // conflict DMA instance and channel
@@ -154,7 +120,7 @@ Err Bus::transfer(uint16_t dev_addr, std::span<const uint8_t> txbuf,
 
     if (method == XferMethod::kDMA &&
         ((!txbuf.empty() && !tx_dma_.instance) || (!rxbuf.empty() && !rx_dma_.instance)))
-        return Err::kDmaNotConfigured;
+        return Err::kUnsupported;
 
     if (xfer_timeout == 0)
         return Err::kTimeout;
@@ -337,9 +303,9 @@ bool Bus::handle_error(BaseType_t& wake)
     // Arbitration loss has precedence: never generate STOP on another master's
     // transaction, even if a bus error is reported in the same ISR snapshot.
     if (LL_I2C_IsActiveFlag_ARLO(i2c_))
-        finish_from_isr(Err::kArbitrationLost, false, wake);
+        finish_from_isr(Err::kI2cArbitrationLost, false, wake);
     else if (LL_I2C_IsActiveFlag_BERR(i2c_))
-        finish_from_isr(Err::kBus, true, wake);
+        finish_from_isr(Err::kI2cBus, true, wake);
     else if (LL_I2C_IsActiveFlag_OVR(i2c_))
         finish_from_isr(Err::kOverrun, true, wake);
     else if (LL_I2C_IsActiveSMBusFlag_TIMEOUT(i2c_))
@@ -357,7 +323,7 @@ void Bus::handle_event(BaseType_t& wake)
     if (LL_I2C_IsEnabledIT_NACK(i2c_) && LL_I2C_IsActiveFlag_NACK(i2c_))
     {
         LL_I2C_ClearFlag_NACK(i2c_);
-        result_ = Err::kNack;
+        result_ = Err::kI2cNack;
         stop_dma();
         LL_I2C_DisableIT_TX(i2c_);
         LL_I2C_DisableIT_RX(i2c_);
@@ -388,7 +354,7 @@ void Bus::handle_event(BaseType_t& wake)
     {
         auto error = result_;
         if (error == Err::kOk && (!tx_.empty() || !rx_.empty()))
-            error = Err::kUnexpectedStop;
+            error = Err::kI2cUnexpectedStop;
         finish_from_isr(error, false, wake);
         return;
     }
@@ -398,14 +364,14 @@ void Bus::handle_event(BaseType_t& wake)
     if (LL_I2C_IsActiveFlag_TCR(i2c_))
     {
         if (chunk_remaining_ != 0 || (reading_ ? rx_.empty() : tx_.empty()))
-            finish_from_isr(Err::kUnexpectedStop, true, wake);
+            finish_from_isr(Err::kI2cUnexpectedStop, true, wake);
         else
             start_chunk(LL_I2C_GENERATE_NOSTARTSTOP);
     }
     else if (LL_I2C_IsActiveFlag_TC(i2c_))
     {
         if (chunk_remaining_ != 0 || reading_ || !tx_.empty() || rx_.empty())
-            finish_from_isr(Err::kUnexpectedStop, true, wake);
+            finish_from_isr(Err::kI2cUnexpectedStop, true, wake);
         else
         {
             reading_ = true;

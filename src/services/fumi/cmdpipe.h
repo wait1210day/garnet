@@ -50,14 +50,15 @@ public:
         );
     }
 
-    FrameError send_resp_err(uint16_t transaction_id, proto::ResponseFlag err,
-                             uint16_t seq, const char *detail_sstr)
+    FrameError send_resp_err(uint16_t transaction_id, uint16_t seq, proto::ErrCode err)
     {
-        Flags flags{err};
+        Flags<proto::ResponseFlag> flags;
         flags.set(proto::ResponseFlag::kDone);
+        flags.set(proto::ResponseFlag::kErr);
         return send_resp(
             transaction_id, seq, flags, [&](proto::PacketWriter& w) {
-                return w.write_sstr(detail_sstr);
+                w.write_enum(err);
+                return true;
             }
         );
     }
@@ -70,6 +71,9 @@ private:
 
     // Protocol defined command handlers
     void handle_cmd_host_hello(const CmdParseInfo& info);
+    void handle_cmd_set_level(const CmdParseInfo& info);
+    void handle_cmd_get_stats(const CmdParseInfo& info);
+    void handle_cmd_ping(const CmdParseInfo& info);
 
     SharedResources *shared_{nullptr};
     uart::Receiver *uart_rx_{nullptr};

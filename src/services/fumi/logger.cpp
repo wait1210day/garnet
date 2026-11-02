@@ -19,6 +19,18 @@ namespace
 Logger g_default_logger;
 } // namespace anonymous
 
+LiteralStrId strerr(ErrStatus err)
+{
+    switch (err)
+    {
+#define CASE(e, s) case e: return FUMI_LITERAL_STR(s);
+        GARNET_ERR_STATUS_STR_LIST(CASE)
+        default:
+            return FUMI_LITERAL_STR("unknown error");
+#undef CASE
+    }
+}
+
 Logger& get_default_logger()
 {
     return g_default_logger;

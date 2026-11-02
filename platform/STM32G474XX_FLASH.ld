@@ -265,6 +265,11 @@ SECTIONS
     . = ALIGN(8);
   } >RAM
 
+  /* [masshiroio] fumi string dict */
+  .fumi.dict 0 (INFO) :
+  {
+    KEEP(*(.fumi.dict*))
+  }
 
 
   /* Remove information from the standard libraries */
