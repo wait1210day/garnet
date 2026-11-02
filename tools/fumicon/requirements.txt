@@ -1,0 +1,2 @@
+pyserial>=3.5,<4
+prompt-toolkit>=3.0,<4
