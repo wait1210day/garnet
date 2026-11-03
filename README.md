@@ -23,8 +23,39 @@ The project is in active development at the early prototype stage:
 - [x] Pulse-skipping mode for light loads (experimental).
 - [x] Initial hardware overvoltage protection, serial commands, and measurement logging.
 - [x] FreeRTOS integration, CMake builds, and MPU task stack guards.
+- [x] fumi (ふみ), a tokenized logging and debug protocol, based on UART transport layer.
 - [ ] Constant-current regulation.
 - [ ] ... and more
+
+## Build and flash
+
+Sync submodules:
+
+```shell
+$ git submodule update --init --recursive
+```
+
+To build the project, set up a venv `//tools/.venv` first:
+
+```shell
+$ python -m venv tools/.venv
+```
+
+After activating the environment, install dependencies:
+```shell
+$ pip install pyelftools
+# And if you want to run fumi host console:
+$ pip install -r tools/fumicon/requirements.txt
+```
+
+Choose a preset (debug or release) to build:
+
+```shell
+$ cmake --preset Release
+$ ninja -C build/release
+# Flash the firmware, requires openocd
+$ ninja -C build/release flash
+```
 
 ## License and acknowledgements
 
